@@ -238,18 +238,18 @@ function (mb::MBConvBlock)(x)
     
     # Expansion
     if !isnothing(mb.expand_filters)
-        x = conv(x, mb.expand_filters; pad=0, flipped=true)
+        x = Flux.conv(x, mb.expand_filters; pad=0, flipped=true)
         x = Flux.swish.(x)
     end
     
-    edim = size(x, 2)  # expanded channels
+    edim = size(x, 3)  # expanded channels
     
     # Reshape for depthwise conv
     x = reshape(x, (l, 1, edim, n))
     
     # Depthwise convolution with groups
     pad_h = (size(mb.dw_filters, 1) - 1) ÷ 2
-    x = conv(x, mb.dw_filters; pad=(pad_h, 0), flipped=true, groups=edim)
+    x = Flux.conv(x, mb.dw_filters; pad=(pad_h, 0), flipped=true, groups=edim)
     x = Flux.swish.(x)
     
     # Squeeze-Excitation
@@ -268,7 +268,8 @@ function (mb::MBConvBlock)(x)
     x = reshape(x, (l, edim, 1, n))
     
     # Projection back
-    x = conv(x, mb.project_filters; pad=0, flipped=true)
+    x = Flux.conv(x, mb.project_filters; pad=0, flipped=true)
+    x = reshape(x, (l, size(mb.project_filters, 4), 1, n))
     
     # Skip connection
     mb.use_skip && return x .+ identity_input
