@@ -103,9 +103,9 @@ Base.@kwdef struct HyperParamRanges
     softmax_alpha = SOFTMAX_ALPHA
     infer_base_layer_code::Bool = true
     
-    # MBConv options (0 = disabled)
-    num_mbconv_range = 0:0
-    mbconv_expansion_options = [4]
+    # MBConv options (default: phi=2, i.e., 3 blocks with expansion=6)
+    num_mbconv_range = 3:3
+    mbconv_expansion_options = [6]
 end
 
 const DEFAULT_RANGES = HyperParamRanges()

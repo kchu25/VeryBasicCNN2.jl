@@ -81,6 +81,7 @@ struct SeqCNN
         # Optional MBConv blocks (EfficientNet-style refinement)
         mbconv_blocks = MBConvBlock[]
         if hp.num_mbconv > 0
+            @info "Using MBConv refinement: $(hp.num_mbconv) blocks with $(hp.mbconv_expansion)x expansion (EfficientNet-style)"
             final_channels = hp.num_img_filters[end]
             for _ in 1:hp.num_mbconv
                 push!(mbconv_blocks, MBConvBlock(;

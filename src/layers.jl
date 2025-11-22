@@ -164,28 +164,19 @@ end
 """
     MBConvBlock
 
-Mobile Inverted Bottleneck Convolution (MBConv) block for efficient feature refinement.
-Inspired by EfficientNet architecture.
-
-# Architecture
-1. Expansion: 1x1 conv to expand channels (expansion_ratio × input_channels)
-2. Depthwise: Depthwise conv for spatial feature extraction
-3. Squeeze-Excite: Optional channel attention
-4. Projection: 1x1 conv to project back to output channels
-5. Skip connection if input/output channels match
+Mobile Inverted Bottleneck Convolution (MBConv) block.
+Simple refinement layer that preserves dimensions.
 
 # Fields
-- `expand`: 1x1 expansion convolution
-- `dwconv`: Depthwise convolution
-- `se`: Squeeze-and-excitation (optional)
-- `project`: 1x1 projection convolution
+- `expand_filters`: Expansion conv filters (1, in_channels, 1, expanded)
+- `dw_filters`: Depthwise conv filters (kernel_size, 1, expanded, 1) 
+- `project_filters`: Projection conv filters (1, expanded, 1, out_channels)
 - `use_skip`: Whether to use skip connection
 """
 struct MBConvBlock
-    expand::Union{Flux.Chain, typeof(identity)}
-    dwconv::Flux.Chain
-    se::Union{Flux.Chain, typeof(identity)}
-    project::Flux.Conv
+    expand_filters::Union{AbstractArray{DEFAULT_FLOAT_TYPE, 4}, Nothing}
+    dw_filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
+    project_filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
     use_skip::Bool
     
     function MBConvBlock(;
@@ -193,47 +184,39 @@ struct MBConvBlock
         out_channels::Int,
         kernel_size::Int = 3,
         expansion_ratio::Int = 4,
-        use_se::Bool = true,
+        use_se::Bool = false,  # Disabled for simplicity
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
     )
         expanded = in_channels * expansion_ratio
+        init_scale = DEFAULT_FLOAT_TYPE(1e-3)
         
-        # Expansion phase (only if expanding)
-        expand = expansion_ratio > 1 ? 
-            Flux.Chain(
-                Flux.Conv((1, 1), in_channels => expanded; bias=true),
-                Flux.BatchNorm(expanded, Flux.swish)
-            ) : identity
+        # Expansion filters (1x1 conv: height=1, width=in_channels)
+        expand_filters = expansion_ratio > 1 ?
+            init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (1, in_channels, 1, expanded)) :
+            nothing
         
-        # Depthwise convolution
-        dwconv = Flux.Chain(
-            Flux.DepthwiseConv((kernel_size, 1), expanded => expanded; bias=true, pad=(kernel_size÷2, 0)),
-            Flux.BatchNorm(expanded, Flux.swish)
-        )
+        # Depthwise filters (kernel_size x 1 per channel)
+        dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, 
+                                         (kernel_size, 1, expanded, 1))
         
-        # Squeeze-and-Excitation
-        se = use_se ? 
-            Flux.Chain(
-                Flux.AdaptiveMeanPool((1, 1)),
-                Flux.Conv((1, 1), expanded => max(1, expanded÷4); bias=true),
-                x -> Flux.swish.(x),
-                Flux.Conv((1, 1), max(1, expanded÷4) => expanded; bias=true),
-                x -> Flux.sigmoid.(x)
-            ) : identity
+        # Projection filters (1x1 conv: height=1, width=expanded)
+        project_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                              (1, expanded, 1, out_channels))
         
-        # Projection back to out_channels
-        project = Flux.Conv((1, 1), expanded => out_channels; bias=true)
+        if use_cuda
+            expand_filters = isnothing(expand_filters) ? nothing : cu(expand_filters)
+            dw_filters = cu(dw_filters)
+            project_filters = cu(project_filters)
+        end
         
-        # Skip connection only if dimensions match
         use_skip = (in_channels == out_channels)
-        
-        block = new(expand, dwconv, se, project, use_skip)
-        
-        # Move to GPU if requested
-        use_cuda && return block |> cu
-        return block
+        return new(expand_filters, dw_filters, project_filters, use_skip)
     end
+    
+    # Direct constructor for GPU/loading
+    MBConvBlock(expand_filters, dw_filters, project_filters, use_skip) = 
+        new(expand_filters, dw_filters, project_filters, use_skip)
 end
 
 Flux.@layer MBConvBlock
@@ -241,22 +224,21 @@ Flux.@layer MBConvBlock
 function (mb::MBConvBlock)(x)
     identity_input = x
     
-    # Expansion
-    x = mb.expand(x)
-    
-    # Depthwise conv
-    x = mb.dwconv(x)
-    
-    # Squeeze-and-Excitation
-    if mb.se !== identity
-        se_weights = mb.se(x)
-        x = x .* se_weights
+    # Expansion (if applicable)
+    if !isnothing(mb.expand_filters)
+        x = conv(x, mb.expand_filters; pad=0, flipped=true)
+        x = Flux.NNlib.relu(x)
     end
     
-    # Projection
-    x = mb.project(x)
+    # Depthwise convolution
+    pad_h = size(mb.dw_filters, 1) ÷ 2
+    x = depthwiseconv(x, mb.dw_filters; pad=(pad_h, 0), flipped=true)
+    x = Flux.NNlib.relu(x)
     
-    # Skip connection
+    # Projection
+    x = conv(x, mb.project_filters; pad=0, flipped=true)
+    
+    # Skip connection (no activation before skip)
     mb.use_skip && return x .+ identity_input
     return x
 end
