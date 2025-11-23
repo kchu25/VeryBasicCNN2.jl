@@ -44,6 +44,7 @@ struct SeqCNN
     conv_layers::Vector{LearnedCodeImgFilters}
     mbconv_blocks::Vector{MBConvBlock}
     output_weights::AbstractArray{DEFAULT_FLOAT_TYPE, 3}
+    final_nonlinearity::Function
     
     function SeqCNN(
         hp::HyperParameters,
@@ -105,12 +106,12 @@ struct SeqCNN
             output_weights = cu(output_weights)
         end
 
-        return new(hp, pwms, conv_layers, mbconv_blocks, output_weights)
+        return new(hp, pwms, conv_layers, mbconv_blocks, output_weights, identity)
     end
     
     # Direct constructor for model loading/conversion
-    SeqCNN(hp, pwms, conv_layers, mbconv_blocks, output_weights) = 
-        new(hp, pwms, conv_layers, mbconv_blocks, output_weights)
+    SeqCNN(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity=identity) = 
+        new(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity)
 end
 
 Flux.@layer SeqCNN
@@ -155,6 +156,10 @@ function Base.getproperty(m::SeqCNN, sym::Symbol)
                 predict_position=predict_position, 
                 apply_nonlinearity=false)
         )
+    elseif sym === :predict_up_to_final_nonlinearity
+        return  (x; kwargs...) -> predict_from_code(m, x; 
+            layer = m.hp.inference_code_layer, 
+            apply_nonlinearity=false, kwargs...)
     else
         return getfield(m, sym)
     end
