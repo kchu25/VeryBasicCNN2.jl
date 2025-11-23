@@ -156,13 +156,20 @@ function Base.getproperty(m::SeqCNN, sym::Symbol)
                 predict_position=predict_position, 
                 apply_nonlinearity=false)
         )
-    elseif sym === :predict_up_to_final_nonlinearity
-        return  (x; kwargs...) -> predict_from_code(m, x; 
-            layer = m.hp.inference_code_layer, 
-            apply_nonlinearity=false, kwargs...)
+    # elseif sym === :predict_up_to_final_nonlinearity
+    #     return  (x; kwargs...) -> VeryBasicCNN2.predict_from_code(m, x; 
+    #         layer = m.hp.inference_code_layer, 
+    #         apply_nonlinearity=false, kwargs...)
     else
         return getfield(m, sym)
     end
+end
+
+function predict_up_to_final_nonlinearity(m, code; predict_position=nothing)
+    VeryBasicCNN2.predict_from_code(m, code; 
+        layer=m.hp.inference_code_layer,
+        apply_nonlinearity=false,
+        predict_position=predict_position)
 end
 
 # ============================================================================
