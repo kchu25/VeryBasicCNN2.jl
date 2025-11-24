@@ -185,15 +185,16 @@ struct MBConvBlock
     function MBConvBlock(;
         in_channels::Int,
         out_channels::Int,
-        kernel_size::Int = 3,
-        expansion_ratio::Int = 4,
-        se_ratio::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(4),  # Standard SE reduction ratio
+        kernel_size::Int = 2,
+        expansion_ratio::Int = 2,
+        se_ratio::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(8),  # SE reduction ratio (higher = fewer params)
         use_se::Bool = true,
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
     )
         expanded = in_channels * expansion_ratio
-        init_scale = DEFAULT_FLOAT_TYPE(1e-3)
+        # init_scale = DEFAULT_FLOAT_TYPE(1e-3)
+        init_scale = DEFAULT_FLOAT_TYPE(1.0)
         
         # Expansion filters (1, in_channels, 1, expanded)
         expand_filters = expansion_ratio > 1 ?
