@@ -272,6 +272,7 @@ function (mb::MBConvBlock)(x)
     x = Flux.conv(x, mb.project_filters; pad=0, flipped=true)
     x = reshape(x, (l, size(mb.project_filters, 4), 1, n))
     
+
     # Skip connection
     mb.use_skip && return x .+ identity_input
     return x
