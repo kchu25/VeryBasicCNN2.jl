@@ -257,7 +257,7 @@ function (mb::MBConvBlock)(x)
     # Global average pooling over spatial dimension
     x_pooled = reshape(mean(x; dims=1), (edim, 1, n))
     
-    # SE: reduce → swish → expand → sigmoid
+    # SE: reduce → tanhshrink → expand → sigmoid
     attn = Flux.NNlib.batched_mul(mb.se_w1, x_pooled)
     attn = Flux.swish.(attn)
     attn = Flux.NNlib.batched_mul(mb.se_w2, attn)
