@@ -6,7 +6,7 @@ using Flux
 using CUDA
 using Random
 using ChainRulesCore: @ignore_derivatives
-using Statistics: mean
+using Statistics: mean, var
 
 # ============================================================================
 # Constants
