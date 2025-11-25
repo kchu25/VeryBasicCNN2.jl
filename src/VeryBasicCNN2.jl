@@ -26,6 +26,7 @@ include("model.jl")
 include("forward.jl")
 include("loss.jl")
 include("convert.jl")
+include("code_processor.jl")
 
 # ============================================================================
 # Exports
@@ -35,6 +36,8 @@ include("convert.jl")
 export SeqCNN
 export HyperParameters, HyperParamRanges
 export LearnedPWMs, LearnedCodeImgFilters, MBConvBlock
+export CodeProcessor, CodeProcessorType
+export plain, resnet, mbconv, soft_threshold
 
 # Hyperparameter functions
 export generate_random_hyperparameters
@@ -60,5 +63,8 @@ export compute_training_loss, huber_loss, masked_mse
 # Utilities
 export model2cpu, model2gpu
 export final_conv_embedding_length
+
+# Code processor
+export create_code_processor, process_code_with_gradient
 
 end
