@@ -161,10 +161,19 @@ function (cp::CodeProcessor)(x)
         gate = Flux.conv(grad, cp.gate_filters; pad=0, flipped=true)
         # After 1x1 conv: (l, 1, C, n) -> reshape to (l, C, 1, n)
         gate = reshape(gate, (size(gate, 1), size(gate, 3), 1, size(gate, 4)))
-        gate = Flux.relu.(gate)
         
-        # Apply learnable soft thresholding
-        gate = sign.(gate) .* max.(abs.(gate) .- threshold, 0)
+        # Iterative soft thresholding (ISTA-style unrolling)
+        # Multiple iterations to progressively sparsify
+        num_iterations = 3
+        step_size = DEFAULT_FLOAT_TYPE(0.3)
+        
+        for iter in 1:num_iterations
+            # Gradient descent step toward original signal
+            gate = gate .+ step_size .* (grad .- gate)
+            
+            # Soft thresholding operation
+            gate = sign.(gate) .* max.(abs.(gate) .- threshold, 0)
+        end
         
         # Normalize gate to [0, 1] range for stability
         max_gate = maximum(abs.(gate); dims=(1,2,3,4)) .+ DEFAULT_FLOAT_TYPE(1e-8)
