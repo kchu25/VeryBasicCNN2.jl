@@ -84,8 +84,8 @@ nucleotide_ranges_fixed_pool_stride(; kwargs...) = HyperParamRanges(;
     num_base_filters_range = 48:24:256,
     conv_filter_range = 64:32:256,
     conv_filter_height_range = 4:8,
-    pool_size_range = 1:1,
-    stride_range = 1:1,
+    pool_size_range = 2:3,
+    stride_range = 2:3,
     num_no_pool_layers = 2,
     infer_base_layer_code = false,
     kwargs...
