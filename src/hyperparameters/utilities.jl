@@ -53,6 +53,42 @@ function with_batch_size(hp::HyperParameters, new_batch_size::Int)
         softmax_strength_img_fil = hp.softmax_strength_img_fil,
         batch_size = new_batch_size,
         inference_code_layer = hp.inference_code_layer,
+        use_layernorm = hp.use_layernorm,
+        num_mbconv = hp.num_mbconv,
+        mbconv_expansion = hp.mbconv_expansion
+    )
+end
+
+"""
+    with_layernorm(hp::HyperParameters, enabled::Bool=true)
+
+Create new HyperParameters with LayerNorm enabled or disabled.
+
+LayerNorm is applied after pooling for layers > inference_code_layer when enabled.
+
+# Example
+```julia
+hp = generate_random_hyperparameters()
+hp_ln = with_layernorm(hp, true)   # Enable LayerNorm
+hp_no_ln = with_layernorm(hp, false)  # Disable LayerNorm
+```
+"""
+function with_layernorm(hp::HyperParameters, enabled::Bool=true)
+    HyperParameters(
+        pfm_len = hp.pfm_len,
+        num_pfms = hp.num_pfms,
+        num_img_filters = hp.num_img_filters,
+        img_fil_widths = hp.img_fil_widths,
+        img_fil_heights = hp.img_fil_heights,
+        pool_base = hp.pool_base,
+        stride_base = hp.stride_base,
+        poolsize = hp.poolsize,
+        stride = hp.stride,
+        pool_lvl_top = hp.pool_lvl_top,
+        softmax_strength_img_fil = hp.softmax_strength_img_fil,
+        batch_size = hp.batch_size,
+        inference_code_layer = hp.inference_code_layer,
+        use_layernorm = enabled,
         num_mbconv = hp.num_mbconv,
         mbconv_expansion = hp.mbconv_expansion
     )
@@ -84,6 +120,7 @@ function with_mbconv(hp::HyperParameters; num_blocks::Int=2, expansion::Int=4)
         softmax_strength_img_fil = hp.softmax_strength_img_fil,
         batch_size = hp.batch_size,
         inference_code_layer = hp.inference_code_layer,
+        use_layernorm = hp.use_layernorm,
         num_mbconv = num_blocks,
         mbconv_expansion = expansion
     )

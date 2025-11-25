@@ -69,6 +69,7 @@ function generate_random_hyperparameters(;
         softmax_strength_img_fil = ranges.softmax_alpha,
         batch_size = batch,
         inference_code_layer = infer_layer,
+        use_layernorm = false,  # Default: no LayerNorm
         num_mbconv = n_mbconv,
         mbconv_expansion = mbconv_exp
     )

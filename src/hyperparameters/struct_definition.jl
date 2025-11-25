@@ -25,6 +25,11 @@ CNN hyperparameters for biological sequence analysis.
 - `softmax_strength_img_fil::Float32`: Softmax strength for filter normalization
 - `batch_size::Int`: Training batch size
 - `inference_code_layer::Int`: Layer to extract code from (0 = PWM layer)
+
+# Normalization Fields
+- `use_layernorm::Bool`: Apply LayerNorm after pooling for layers > inference_code_layer (default: false)
+
+# MBConv Fields
 - `num_mbconv::Int`: Number of MBConv blocks to add (0 = none, default)
 - `mbconv_expansion::Int`: MBConv expansion ratio (default: 4)
 """
@@ -47,6 +52,9 @@ Base.@kwdef struct HyperParameters
     softmax_strength_img_fil::DEFAULT_FLOAT_TYPE = 500.0
     batch_size::Int = 256
     inference_code_layer::Int = 0
+    
+    # Normalization
+    use_layernorm::Bool = false  # Apply LayerNorm after inference_code_layer
     
     # MBConv (optional EfficientNet-style blocks)
     num_mbconv::Int = 0
@@ -75,5 +83,6 @@ function Base.show(io::IO, hp::HyperParameters)
     end
     
     println(io, "\n  Inference code layer: $(hp.inference_code_layer)")
+    hp.use_layernorm && print(io, "\n  LayerNorm: enabled (layers > $(hp.inference_code_layer))")
     hp.num_mbconv > 0 && print(io, "\n  MBConv blocks: $(hp.num_mbconv) (expansion: $(hp.mbconv_expansion)x)")
 end

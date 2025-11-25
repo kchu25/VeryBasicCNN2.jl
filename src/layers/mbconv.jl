@@ -34,7 +34,7 @@ struct MBConvBlock
         rng = Random.GLOBAL_RNG
     )
         expanded = in_channels * expansion_ratio
-        init_scale = DEFAULT_FLOAT_TYPE(1.0)
+        init_scale = DEFAULT_FLOAT_TYPE(0.1)
         
         # Expansion filters (1, in_channels, 1, expanded)
         expand_filters = expansion_ratio > 1 ?

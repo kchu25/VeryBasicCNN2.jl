@@ -72,6 +72,14 @@ function forward_conv_recursive(model::SeqCNN, code, current_layer::Int,
                     (model.hp.stride[current_layer], 1);
                     skip_pooling=skip_pool)
     
+    # Apply LayerNorm after pooling if past inference layer
+    if current_layer > model.hp.inference_code_layer
+        conv_layer = model.conv_layers[current_layer]
+        if !isnothing(conv_layer.ln_gamma)
+            code = layernorm(code, conv_layer.ln_gamma, conv_layer.ln_beta)
+        end
+    end
+    
     # Recurse to next layer
     return forward_conv_recursive(model, code, current_layer + 1, target_layer; 
                                  use_sparsity=use_sparsity)

@@ -67,13 +67,14 @@ struct SeqCNN
             rng = rng
         )
 
-        # Convolutional layers
+        # Convolutional layers (with LayerNorm for layers > inference_code_layer if enabled)
         conv_layers = [
             LearnedCodeImgFilters(; 
                 input_channels = hp.img_fil_widths[i],
                 filter_height = hp.img_fil_heights[i],
                 num_filters = hp.num_img_filters[i],
-                init_scale = init_scale, 
+                init_scale = init_scale,
+                use_layernorm = (hp.use_layernorm && i > hp.inference_code_layer),
                 use_cuda = use_cuda,
                 rng = rng
             ) for i in 1:num_layers(hp)
@@ -206,6 +207,11 @@ function create_model(input_dims, output_dim, batch_size::Int;
                      use_cuda::Bool = true,
                      ranges = DEFAULT_RANGES)
     hp = generate_random_hyperparameters(; batch_size=batch_size, rng=rng, ranges=ranges)
+    
+    # Enable LayerNorm and MBConv by default 
+    # disable these two if needed for specific experiments
+    hp = with_layernorm(hp, true)
+    hp = with_mbconv(hp; num_blocks=2, expansion=4)
     
     # Validate architecture
     if final_conv_embedding_length(hp, input_dims[2]) < 1
