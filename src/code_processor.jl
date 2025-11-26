@@ -61,8 +61,8 @@ struct CodeProcessor
         use_se::Bool = true,     # Toggle SE attention for mbconv
         use_hard_mask::Bool = false,  # Toggle Gumbel-Softmax hard mask
         mask_temp::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.5),
-        mask_eta::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1.1),
-        mask_gamma::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(-0.1),
+        mask_eta::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1.0),
+        mask_gamma::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.0),
         arch_type::CodeProcessorType = mbconv,
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
@@ -221,7 +221,7 @@ end
 Flux.@layer CodeProcessor
 
 """
-    (cp::CodeProcessor)(x; training::Bool=true)
+    (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=nothing)
 
 Forward pass through code processor.
 
@@ -236,8 +236,9 @@ Forward pass through code processor.
 # Arguments
 - `x`: Input tensor (spatial, channels, 1, batch)
 - `training`: Whether in training mode (affects Gumbel sampling in hard mask)
+- `step`: Training step number (for temperature annealing). If nothing, uses fixed cp.mask_temp
 """
-function (cp::CodeProcessor)(x; training::Bool=true)
+function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=nothing)
     l, M, _, n = size(x)  # (spatial, channels, 1, batch)
     
     # Soft threshold architecture
@@ -387,6 +388,15 @@ function (cp::CodeProcessor)(x; training::Bool=true)
         p_c = Flux.sigmoid.(mask_logits)
         
         if training
+            # Temperature annealing based on training steps
+            # Decay: 0.5 * 0.9995^step → reaches ~0.1 after ~3000 steps
+            if isnothing(step)
+                temp = cp.mask_temp  # Use default if step not provided
+            else
+                temp = max(DEFAULT_FLOAT_TYPE(0.1), 
+                          cp.mask_temp * DEFAULT_FLOAT_TYPE(0.9995)^step)
+            end
+            
             # Gumbel(0,1) sampling: -log(-log(uniform))
             gumbel = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p_c)...)))
             if x isa CuArray
@@ -396,15 +406,15 @@ function (cp::CodeProcessor)(x; training::Bool=true)
             # Gumbel-Softmax: sigmoid((log(p) - log(1-p) + gumbel) / temp)
             logit_p = log.(p_c .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
                      log.(1 .- p_c .+ DEFAULT_FLOAT_TYPE(1e-8))
-            s_c = Flux.sigmoid.((logit_p .+ gumbel) ./ cp.mask_temp)
+            s_c = Flux.sigmoid.((logit_p .+ gumbel) ./ temp)
+            
+            # Stretch during training for smoother gradients
+            z_c = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                       s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
         else
-            # Test time: deterministic (no Gumbel sampling)
-            s_c = p_c
+            # Test time: truly binary (hard threshold at 0.5)
+            z_c = DEFAULT_FLOAT_TYPE.(p_c .> DEFAULT_FLOAT_TYPE(0.95))
         end
-        
-        # Hard threshold with stretching: z_c = clamp(s_c * (eta - gamma) + gamma, 0, 1)
-        z_c = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
-                   s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
         
         # Apply mask directly (z_c already has same shape as x)
         x = x .* z_c
@@ -459,8 +469,8 @@ function create_code_processor(hp::HyperParameters;
                               use_se::Bool = true,
                               use_hard_mask::Bool = false,
                               mask_temp::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.5),
-                              mask_eta::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1.1),
-                              mask_gamma::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(-0.1),
+                              mask_eta::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1.0),
+                              mask_gamma::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.0),
                               use_cuda::Bool = true,
                               rng = Random.GLOBAL_RNG)
     # Get dimensions at inference code layer
@@ -493,7 +503,7 @@ function create_code_processor(hp::HyperParameters;
 end
 
 """
-    process_code_with_gradient(processor::CodeProcessor, code, gradient)
+    process_code_with_gradient(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
 
 Process code and gradient features through the processor network.
 
@@ -501,14 +511,25 @@ Process code and gradient features through the processor network.
 - `processor`: CodeProcessor instance
 - `code`: Code features at inference layer (l, C, 1, n)
 - `gradient`: Gradient features at same layer (l, C, 1, n)
+- `training`: Whether in training mode
+- `step`: Current training step (for temperature annealing). Counts total batches processed.
 
 # Returns
 - Processed features (l, C, 1, n) - same size as code
+
+# Example
+```julia
+# In training loop
+for (step, batch) in enumerate(dataloader)
+    # Temperature decays: 0.5 → 0.1 over ~3000 steps
+    output = process_code_with_gradient(proc, code, grad; training=true, step=step)
+end
+```
 """
-function process_code_with_gradient(processor::CodeProcessor, code, gradient; training::Bool=true)
+function process_code_with_gradient(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
     # Concatenate along channel dimension
     combined = cat(code, gradient; dims=2)
     
     # Process through network
-    return processor(combined; training=training)
+    return processor(combined; training=training, step=step)
 end
