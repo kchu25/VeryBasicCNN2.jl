@@ -53,6 +53,7 @@ struct CodeProcessor
         kernel_size::Int = 3,
         expansion_ratio::Int = 2,
         se_ratio::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(8),
+        use_se::Bool = true,     # Toggle SE attention for mbconv
         arch_type::CodeProcessorType = mbconv,
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
@@ -120,8 +121,8 @@ struct CodeProcessor
                 dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                                  (kernel_size, 1, 1, expanded))
                 
-                # Squeeze-Excitation (only for mbconv)
-                if arch_type == mbconv
+                # Squeeze-Excitation (only for mbconv if use_se=true)
+                if arch_type == mbconv && use_se
                     se_channels = max(1, floor(Int, expanded / se_ratio))
                     se_w1 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (se_channels, expanded, 1))
                     se_w2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (expanded, se_channels, 1))
@@ -389,6 +390,7 @@ function create_code_processor(hp::HyperParameters;
                               arch_type::CodeProcessorType = mbconv,
                               kernel_size::Int = 3,
                               expansion_ratio::Int = 2,
+                              use_se::Bool = true,
                               use_cuda::Bool = true,
                               rng = Random.GLOBAL_RNG)
     # Get dimensions at inference code layer
@@ -409,6 +411,7 @@ function create_code_processor(hp::HyperParameters;
         out_channels = out_channels,
         kernel_size = kernel_size,
         expansion_ratio = expansion_ratio,
+        use_se = use_se,
         arch_type = arch_type,
         use_cuda = use_cuda,
         rng = rng
