@@ -393,8 +393,8 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
             if isnothing(step)
                 temp = cp.mask_temp  # Use default if step not provided
             else
-                temp = max(DEFAULT_FLOAT_TYPE(0.01), 
-                          cp.mask_temp * DEFAULT_FLOAT_TYPE(0.99)^step)
+                temp = max(DEFAULT_FLOAT_TYPE(0.1), 
+                          cp.mask_temp * DEFAULT_FLOAT_TYPE(0.9995)^step)
             end
             
             # Gumbel(0,1) sampling: -log(-log(uniform))
@@ -414,7 +414,7 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
         else
             # Test time: same pipeline as training but without Gumbel noise
             # Use minimum temperature (sharpest possible)
-            temp = DEFAULT_FLOAT_TYPE(0.01)
+            temp = DEFAULT_FLOAT_TYPE(0.1)
             
             # Deterministic logit transformation (no Gumbel)
             logit_p = log.(p_c .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
@@ -426,7 +426,7 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
                        s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
             
             # Hard cutoff: truly binary {0, 1}
-            z_c = DEFAULT_FLOAT_TYPE.(z_c_soft .> DEFAULT_FLOAT_TYPE(0.95))
+            z_c = DEFAULT_FLOAT_TYPE.(z_c_soft .> DEFAULT_FLOAT_TYPE(0.5))
         end
         
         # Apply mask directly (z_c already has same shape as x)
