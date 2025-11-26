@@ -393,8 +393,8 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
             if isnothing(step)
                 temp = cp.mask_temp  # Use default if step not provided
             else
-                temp = max(DEFAULT_FLOAT_TYPE(0.1), 
-                          cp.mask_temp * DEFAULT_FLOAT_TYPE(0.9995)^step)
+                temp = max(DEFAULT_FLOAT_TYPE(0.01), 
+                          cp.mask_temp * DEFAULT_FLOAT_TYPE(0.99)^step)
             end
             
             # Gumbel(0,1) sampling: -log(-log(uniform))
@@ -412,8 +412,21 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
             z_c = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
                        s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
         else
-            # Test time: truly binary (hard threshold at 0.5)
-            z_c = DEFAULT_FLOAT_TYPE.(p_c .> DEFAULT_FLOAT_TYPE(0.95))
+            # Test time: same pipeline as training but without Gumbel noise
+            # Use minimum temperature (sharpest possible)
+            temp = DEFAULT_FLOAT_TYPE(0.01)
+            
+            # Deterministic logit transformation (no Gumbel)
+            logit_p = log.(p_c .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
+                     log.(1 .- p_c .+ DEFAULT_FLOAT_TYPE(1e-8))
+            s_c = Flux.sigmoid.(logit_p ./ temp)
+            
+            # Stretch (same as training)
+            z_c_soft = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                       s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
+            
+            # Hard cutoff: truly binary {0, 1}
+            z_c = DEFAULT_FLOAT_TYPE.(z_c_soft .> DEFAULT_FLOAT_TYPE(0.95))
         end
         
         # Apply mask directly (z_c already has same shape as x)
