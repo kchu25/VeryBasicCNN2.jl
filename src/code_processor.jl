@@ -120,6 +120,22 @@ struct CodeProcessor
             # Keep threshold_param on CPU for scalar access
         end
         
+        # Count parameters
+        num_params = 0
+        num_params += isnothing(expand_filters) ? 0 : length(expand_filters)
+        num_params += length(dw_filters)
+        num_params += isnothing(se_w1) ? 0 : length(se_w1)
+        num_params += isnothing(se_w2) ? 0 : length(se_w2)
+        num_params += length(project_filters)
+        num_params += isnothing(gate_filters) ? 0 : length(gate_filters)
+        num_params += isnothing(threshold_param) ? 0 : length(threshold_param)
+        
+        println("CodeProcessor ($arch_type): $num_params parameters")
+        println("  - in_channels: $in_channels, out_channels: $out_channels")
+        if arch_type == mbconv
+            println("  - expansion_ratio: $expansion_ratio, se_ratio: $se_ratio")
+        end
+        
         return new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                    gate_filters, threshold_param, use_residual, arch_type)
     end
