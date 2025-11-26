@@ -296,7 +296,7 @@ function (cp::CodeProcessor)(x)
     x = Flux.conv(x, cp.project_filters; pad=0, flipped=true)
     x = reshape(x, (l, size(cp.project_filters, 4), 1, n))
     
-    # Second layer for deep_plain
+    # Second layer for deep_plain with lightweight channel attention
     if !isnothing(cp.dw_filters_2)
         current_channels_2 = size(x, 2)
         x = reshape(x, (l, 1, current_channels_2, n))
@@ -310,9 +310,14 @@ function (cp::CodeProcessor)(x)
         x = reshape(x, (l, current_channels_2, 1, n))
         x = Flux.conv(x, cp.project_filters_2; pad=0, flipped=true)
         x = reshape(x, (l, size(cp.project_filters_2, 4), 1, n))
+        
+        # Lightweight channel attention (no extra params!)
+        attn = mean(x; dims=1)  # (1, C, 1, n) - global average pooling
+        attn = Flux.sigmoid.(attn)  # Soft gating
+        x = x .* attn  # Channel reweighting
     end
     
-    # Third layer for deep_plain
+    # Third layer for deep_plain with lightweight channel attention
     if !isnothing(cp.dw_filters_3)
         current_channels_3 = size(x, 2)
         x = reshape(x, (l, 1, current_channels_3, n))
@@ -326,6 +331,11 @@ function (cp::CodeProcessor)(x)
         x = reshape(x, (l, current_channels_3, 1, n))
         x = Flux.conv(x, cp.project_filters_3; pad=0, flipped=true)
         x = reshape(x, (l, size(cp.project_filters_3, 4), 1, n))
+        
+        # Lightweight channel attention (no extra params!)
+        attn = mean(x; dims=1)  # (1, C, 1, n)
+        attn = Flux.sigmoid.(attn)  # Soft gating
+        x = x .* attn  # Channel reweighting
     end
     
     # Residual connection
