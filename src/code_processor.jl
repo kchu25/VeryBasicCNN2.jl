@@ -223,21 +223,23 @@ function (cp::CodeProcessor)(x)
     x = Flux.conv(x, cp.dw_filters; pad=(pad_h, 0), flipped=true, groups=current_channels)
     x = Flux.swish.(x)
     
+    # Reshape back for projection
+    x = reshape(x, (l, current_channels, 1, n))
+    
     # Squeeze-Excitation (mbconv only)
     if !isnothing(cp.se_w1)
-        x_pooled = reshape(mean(x; dims=1), (current_channels, 1, n))
+        # Need to reshape again for SE
+        x_temp = reshape(x, (l, 1, current_channels, n))
+        x_pooled = reshape(mean(x_temp; dims=1), (current_channels, 1, n))
         attn = Flux.NNlib.batched_mul(cp.se_w1, x_pooled)
         attn = Flux.swish.(attn)
         attn = Flux.NNlib.batched_mul(cp.se_w2, attn)
         attn = Flux.sigmoid.(attn)
-        attn = reshape(attn, (1, 1, current_channels, n))
+        attn = reshape(attn, (1, current_channels, 1, 1))
         x = x .* attn
     end
     
-    # Reshape back
-    x = reshape(x, (l, current_channels, 1, n))
-    
-    # Projection
+    # Projection (1x1 conv for channel mixing - now used for all architectures)
     x = Flux.conv(x, cp.project_filters; pad=0, flipped=true)
     x = reshape(x, (l, size(cp.project_filters, 4), 1, n))
     
