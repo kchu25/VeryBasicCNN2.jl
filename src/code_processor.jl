@@ -44,6 +44,11 @@ struct CodeProcessor
     project_filters_2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Second projection for deep_plain
     dw_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third layer for deep_plain
     project_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third projection for deep_plain
+    mask_proj::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Projection to get mask logits from features
+    mask_temp::DEFAULT_FLOAT_TYPE  # Gumbel-Softmax temperature
+    mask_eta::DEFAULT_FLOAT_TYPE   # Right stretch for hard threshold
+    mask_gamma::DEFAULT_FLOAT_TYPE # Left stretch for hard threshold
+    use_hard_mask::Bool  # Whether to use hard mask
     use_residual::Bool
     arch_type::CodeProcessorType
     
@@ -54,11 +59,25 @@ struct CodeProcessor
         expansion_ratio::Int = 2,
         se_ratio::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(8),
         use_se::Bool = true,     # Toggle SE attention for mbconv
+        use_hard_mask::Bool = false,  # Toggle Gumbel-Softmax hard mask
+        mask_temp::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.5),
+        mask_eta::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1.1),
+        mask_gamma::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(-0.1),
         arch_type::CodeProcessorType = mbconv,
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
     )
         init_scale = DEFAULT_FLOAT_TYPE(0.01)
+        
+        # Initialize mask projection if requested
+        if use_hard_mask
+            # 1×1 conv: out_channels -> out_channels
+            # Output goes through sigmoid to get p_c ∈ [0,1]
+            mask_proj = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                           (1, out_channels, 1, out_channels))
+        else
+            mask_proj = nothing
+        end
         
         # Soft threshold architecture
         if arch_type == soft_threshold
@@ -157,6 +176,7 @@ struct CodeProcessor
             project_filters_2 = isnothing(project_filters_2) ? nothing : cu(project_filters_2)
             dw_filters_3 = isnothing(dw_filters_3) ? nothing : cu(dw_filters_3)
             project_filters_3 = isnothing(project_filters_3) ? nothing : cu(project_filters_3)
+            mask_proj = isnothing(mask_proj) ? nothing : cu(mask_proj)
             # Keep threshold_param on CPU for scalar access
         end
         
@@ -173,6 +193,7 @@ struct CodeProcessor
         num_params += isnothing(project_filters_2) ? 0 : length(project_filters_2)
         num_params += isnothing(dw_filters_3) ? 0 : length(dw_filters_3)
         num_params += isnothing(project_filters_3) ? 0 : length(project_filters_3)
+        num_params += isnothing(mask_proj) ? 0 : length(mask_proj)
         
         println("CodeProcessor ($arch_type): $num_params parameters")
         println("  - in_channels: $in_channels, out_channels: $out_channels")
@@ -182,22 +203,25 @@ struct CodeProcessor
         
         return new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                    gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                   dw_filters_3, project_filters_3, use_residual, arch_type)
+                   dw_filters_3, project_filters_3, mask_proj, mask_temp, mask_eta,
+                   mask_gamma, use_hard_mask, use_residual, arch_type)
     end
     
     # Positional constructor for Flux/Optimisers
     CodeProcessor(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                   gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                  dw_filters_3, project_filters_3, use_residual, arch_type) = 
+                  dw_filters_3, project_filters_3, mask_proj, mask_temp, mask_eta,
+                  mask_gamma, use_hard_mask, use_residual, arch_type) = 
         new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
             gate_filters, threshold_param, dw_filters_2, project_filters_2,
-            dw_filters_3, project_filters_3, use_residual, arch_type)
+            dw_filters_3, project_filters_3, mask_proj, mask_temp, mask_eta,
+            mask_gamma, use_hard_mask, use_residual, arch_type)
 end
 
 Flux.@layer CodeProcessor
 
 """
-    (cp::CodeProcessor)(x)
+    (cp::CodeProcessor)(x; training::Bool=true)
 
 Forward pass through code processor.
 
@@ -206,9 +230,14 @@ Forward pass through code processor.
 2. Depthwise convolution + activation
 3. Optional SE attention (mbconv only)
 4. Projection back to output channels
-5. Optional residual connection (resnet, mbconv)
+5. Optional hard mask (if enabled)
+6. Optional residual connection (resnet, mbconv)
+
+# Arguments
+- `x`: Input tensor (spatial, channels, 1, batch)
+- `training`: Whether in training mode (affects Gumbel sampling in hard mask)
 """
-function (cp::CodeProcessor)(x)
+function (cp::CodeProcessor)(x; training::Bool=true)
     l, M, _, n = size(x)  # (spatial, channels, 1, batch)
     
     # Soft threshold architecture
@@ -339,9 +368,46 @@ function (cp::CodeProcessor)(x)
         x = x .* attn  # Channel reweighting
     end
     
-    # Residual connection
+    # Residual connection FIRST (if enabled)
     if cp.use_residual
-        return x .+ identity_input
+        x = x .+ identity_input
+    end
+    
+    # Apply hard mask AFTER residual (if enabled)
+    if cp.use_hard_mask && !isnothing(cp.mask_proj)
+        # Learn mask probabilities from the OUTPUT features (after residual)
+        # x shape: (l, out_channels, 1, n)
+        mask_logits = Flux.conv(x, cp.mask_proj; pad=0, flipped=true)
+        # Output: (l, 1, out_channels, n) -> reshape to (l, out_channels, 1, n)
+        mask_logits = reshape(mask_logits, (size(mask_logits, 1), size(mask_logits, 3), 
+                                            1, size(mask_logits, 4)))
+        
+        # Get probabilities: p_c = sigmoid(logits)
+        # Shape: (l, out_channels, 1, n) - one probability per (spatial, channel, batch) position
+        p_c = Flux.sigmoid.(mask_logits)
+        
+        if training
+            # Gumbel(0,1) sampling: -log(-log(uniform))
+            gumbel = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p_c)...)))
+            if x isa CuArray
+                gumbel = cu(gumbel)
+            end
+            
+            # Gumbel-Softmax: sigmoid((log(p) - log(1-p) + gumbel) / temp)
+            logit_p = log.(p_c .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
+                     log.(1 .- p_c .+ DEFAULT_FLOAT_TYPE(1e-8))
+            s_c = Flux.sigmoid.((logit_p .+ gumbel) ./ cp.mask_temp)
+        else
+            # Test time: deterministic (no Gumbel sampling)
+            s_c = p_c
+        end
+        
+        # Hard threshold with stretching: z_c = clamp(s_c * (eta - gamma) + gamma, 0, 1)
+        z_c = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                   s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
+        
+        # Apply mask directly (z_c already has same shape as x)
+        x = x .* z_c
     end
     
     return x
@@ -391,6 +457,10 @@ function create_code_processor(hp::HyperParameters;
                               kernel_size::Int = 3,
                               expansion_ratio::Int = 2,
                               use_se::Bool = true,
+                              use_hard_mask::Bool = false,
+                              mask_temp::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.5),
+                              mask_eta::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1.1),
+                              mask_gamma::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(-0.1),
                               use_cuda::Bool = true,
                               rng = Random.GLOBAL_RNG)
     # Get dimensions at inference code layer
@@ -412,6 +482,10 @@ function create_code_processor(hp::HyperParameters;
         kernel_size = kernel_size,
         expansion_ratio = expansion_ratio,
         use_se = use_se,
+        use_hard_mask = use_hard_mask,
+        mask_temp = mask_temp,
+        mask_eta = mask_eta,
+        mask_gamma = mask_gamma,
         arch_type = arch_type,
         use_cuda = use_cuda,
         rng = rng
@@ -431,10 +505,10 @@ Process code and gradient features through the processor network.
 # Returns
 - Processed features (l, C, 1, n) - same size as code
 """
-function process_code_with_gradient(processor::CodeProcessor, code, gradient)
+function process_code_with_gradient(processor::CodeProcessor, code, gradient; training::Bool=true)
     # Concatenate along channel dimension
     combined = cat(code, gradient; dims=2)
     
     # Process through network
-    return processor(combined)
+    return processor(combined; training=training)
 end
