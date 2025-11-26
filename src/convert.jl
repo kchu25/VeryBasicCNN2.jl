@@ -19,9 +19,17 @@ model_cpu = model2cpu(model)
 ```
 """
 function model2cpu(model::SeqCNN)
-    # Convert conv layers
+    # Convert conv layers - preserve LayerNorm if present
     conv_cpu = [
-        LearnedCodeImgFilters(layer.filters |> Array)
+        if isnothing(layer.ln_gamma)
+            LearnedCodeImgFilters(layer.filters |> Array)
+        else
+            LearnedCodeImgFilters(
+                layer.filters |> Array,
+                layer.ln_gamma |> Array,
+                layer.ln_beta |> Array
+            )
+        end
         for layer in model.conv_layers
     ]
     
@@ -37,7 +45,7 @@ function model2cpu(model::SeqCNN)
     # Convert output weights
     weights_cpu = model.output_weights |> Array
     
-    return SeqCNN(model.hp, pwms_cpu, conv_cpu, mbconv_cpu, weights_cpu)
+    return SeqCNN(model.hp, pwms_cpu, conv_cpu, mbconv_cpu, weights_cpu, model.final_nonlinearity)
 end
 
 """
@@ -57,9 +65,17 @@ model_gpu = model2gpu(model)
 ```
 """
 function model2gpu(model::SeqCNN)
-    # Convert conv layers
+    # Convert conv layers - preserve LayerNorm if present
     conv_gpu = [
-        LearnedCodeImgFilters(layer.filters |> cu)
+        if isnothing(layer.ln_gamma)
+            LearnedCodeImgFilters(layer.filters |> cu)
+        else
+            LearnedCodeImgFilters(
+                layer.filters |> cu,
+                layer.ln_gamma |> cu,
+                layer.ln_beta |> cu
+            )
+        end
         for layer in model.conv_layers
     ]
     
@@ -75,5 +91,5 @@ function model2gpu(model::SeqCNN)
     # Convert output weights
     weights_gpu = model.output_weights |> cu
     
-    return SeqCNN(model.hp, pwms_gpu, conv_gpu, mbconv_gpu, weights_gpu)
+    return SeqCNN(model.hp, pwms_gpu, conv_gpu, mbconv_gpu, weights_gpu, model.final_nonlinearity)
 end
