@@ -157,30 +157,20 @@ function (cp::CodeProcessor)(x)
         # Extract threshold value (kept on CPU for easy access)
         threshold = abs(cp.threshold_param[1])
         
-        # Learn gate weights from gradient features
-        gate = Flux.conv(grad, cp.gate_filters; pad=0, flipped=true)
+        # Learn to gate based on CODE PATTERNS (not gradient itself!)
+        # This learns which gradient features are useful given the code context
+        gate_logits = Flux.conv(code, cp.gate_filters; pad=0, flipped=true)
         # After 1x1 conv: (l, 1, C, n) -> reshape to (l, C, 1, n)
-        gate = reshape(gate, (size(gate, 1), size(gate, 3), 1, size(gate, 4)))
+        gate_logits = reshape(gate_logits, (size(gate_logits, 1), size(gate_logits, 3), 1, size(gate_logits, 4)))
         
-        # Iterative soft thresholding (ISTA-style unrolling)
-        # Multiple iterations to progressively sparsify
-        num_iterations = 3
-        step_size = DEFAULT_FLOAT_TYPE(0.3)
+        # Sigmoid to get gates in [0, 1]
+        gates = Flux.sigmoid.(gate_logits)
         
-        for iter in 1:num_iterations
-            # Gradient descent step toward original signal
-            gate = gate .+ step_size .* (grad .- gate)
-            
-            # Soft thresholding operation
-            gate = sign.(gate) .* max.(abs.(gate) .- threshold, 0)
-        end
+        # Apply threshold: gates below threshold → 0 (sparse!)
+        gates = gates .* (gates .> threshold)
         
-        # Normalize gate to [0, 1] range for stability
-        max_gate = maximum(abs.(gate); dims=(1,2,3,4)) .+ DEFAULT_FLOAT_TYPE(1e-8)
-        gate = gate ./ max_gate
-        
-        # Apply gating to gradient
-        modulated_grad = grad .* gate
+        # Apply learned sparse gates to gradient
+        modulated_grad = grad .* gates
         
         # Combine code with gated gradient
         combined = cat(code, modulated_grad; dims=2)
@@ -235,7 +225,8 @@ function (cp::CodeProcessor)(x)
         attn = Flux.swish.(attn)
         attn = Flux.NNlib.batched_mul(cp.se_w2, attn)
         attn = Flux.sigmoid.(attn)
-        attn = reshape(attn, (1, current_channels, 1, 1))
+        # Reshape: (current_channels, 1, n) -> (1, current_channels, 1, n)
+        attn = reshape(attn, (1, current_channels, 1, n))
         x = x .* attn
     end
     
