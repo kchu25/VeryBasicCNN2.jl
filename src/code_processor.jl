@@ -242,7 +242,7 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
     l, M, _, n = size(x)  # (spatial, channels, 1, batch)
     
     # Soft threshold architecture
-    if cp.arch_type == soft_threshold
+    if cp.arch_type == soft_threshold # TODO remove it
         C = M ÷ 2  # Split point between code and gradient
         code = x[:, 1:C, :, :]
         grad = x[:, C+1:end, :, :]
@@ -275,12 +275,12 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
         return output
     end
     
-    # For residual, need to extract code portion (first half of channels)
+    # For residual, need to extract gradient portion (first half of channels)
     if cp.use_residual
         # Assume input is [code; gradient] concatenated
         # Output should match code dimensions
         out_channels = size(cp.project_filters, 4)
-        identity_input = x[:, 1:out_channels, :, :]
+        identity_input = @view x[:, out_channels+1:end, :, :]
     end
     
     # Expansion (mbconv only)
