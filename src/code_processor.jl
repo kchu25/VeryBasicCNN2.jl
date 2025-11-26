@@ -42,6 +42,8 @@ struct CodeProcessor
     threshold_param::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 1}}
     dw_filters_2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Second layer for deep_plain
     project_filters_2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Second projection for deep_plain
+    dw_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third layer for deep_plain
+    project_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third projection for deep_plain
     use_residual::Bool
     arch_type::CodeProcessorType
     
@@ -81,7 +83,7 @@ struct CodeProcessor
             gate_filters = nothing
             threshold_param = nothing
             
-            # Deep plain: 2 stacked layers
+            # Deep plain: 3 stacked layers
             if arch_type == deep_plain
                 # First layer: 2C → C
                 dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
@@ -92,6 +94,11 @@ struct CodeProcessor
                 dw_filters_2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                                    (kernel_size, 1, 1, out_channels))
                 project_filters_2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                                       (1, out_channels, 1, out_channels))
+                # Third layer: C → C
+                dw_filters_3 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                                   (kernel_size, 1, 1, out_channels))
+                project_filters_3 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                                        (1, out_channels, 1, out_channels))
                 expand_filters = nothing
                 se_w1 = nothing
@@ -127,9 +134,11 @@ struct CodeProcessor
                 project_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                                      (1, expanded, 1, out_channels))
                 
-                # No second layer for these architectures
+                # No second/third layer for these architectures
                 dw_filters_2 = nothing
                 project_filters_2 = nothing
+                dw_filters_3 = nothing
+                project_filters_3 = nothing
                 
                 # Residual connection only for resnet and mbconv
                 use_residual = (arch_type in [resnet, mbconv])
@@ -145,6 +154,8 @@ struct CodeProcessor
             gate_filters = isnothing(gate_filters) ? nothing : cu(gate_filters)
             dw_filters_2 = isnothing(dw_filters_2) ? nothing : cu(dw_filters_2)
             project_filters_2 = isnothing(project_filters_2) ? nothing : cu(project_filters_2)
+            dw_filters_3 = isnothing(dw_filters_3) ? nothing : cu(dw_filters_3)
+            project_filters_3 = isnothing(project_filters_3) ? nothing : cu(project_filters_3)
             # Keep threshold_param on CPU for scalar access
         end
         
@@ -159,6 +170,8 @@ struct CodeProcessor
         num_params += isnothing(threshold_param) ? 0 : length(threshold_param)
         num_params += isnothing(dw_filters_2) ? 0 : length(dw_filters_2)
         num_params += isnothing(project_filters_2) ? 0 : length(project_filters_2)
+        num_params += isnothing(dw_filters_3) ? 0 : length(dw_filters_3)
+        num_params += isnothing(project_filters_3) ? 0 : length(project_filters_3)
         
         println("CodeProcessor ($arch_type): $num_params parameters")
         println("  - in_channels: $in_channels, out_channels: $out_channels")
@@ -168,16 +181,16 @@ struct CodeProcessor
         
         return new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                    gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                   use_residual, arch_type)
+                   dw_filters_3, project_filters_3, use_residual, arch_type)
     end
     
     # Positional constructor for Flux/Optimisers
     CodeProcessor(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                   gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                  use_residual, arch_type) = 
+                  dw_filters_3, project_filters_3, use_residual, arch_type) = 
         new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
             gate_filters, threshold_param, dw_filters_2, project_filters_2,
-            use_residual, arch_type)
+            dw_filters_3, project_filters_3, use_residual, arch_type)
 end
 
 Flux.@layer CodeProcessor
@@ -297,6 +310,22 @@ function (cp::CodeProcessor)(x)
         x = reshape(x, (l, current_channels_2, 1, n))
         x = Flux.conv(x, cp.project_filters_2; pad=0, flipped=true)
         x = reshape(x, (l, size(cp.project_filters_2, 4), 1, n))
+    end
+    
+    # Third layer for deep_plain
+    if !isnothing(cp.dw_filters_3)
+        current_channels_3 = size(x, 2)
+        x = reshape(x, (l, 1, current_channels_3, n))
+        
+        # Third depthwise conv
+        pad_h_3 = (size(cp.dw_filters_3, 1) - 1) ÷ 2
+        x = Flux.conv(x, cp.dw_filters_3; pad=(pad_h_3, 0), flipped=true, groups=current_channels_3)
+        x = Flux.swish.(x)
+        
+        # Reshape and third projection
+        x = reshape(x, (l, current_channels_3, 1, n))
+        x = Flux.conv(x, cp.project_filters_3; pad=0, flipped=true)
+        x = reshape(x, (l, size(cp.project_filters_3, 4), 1, n))
     end
     
     # Residual connection
