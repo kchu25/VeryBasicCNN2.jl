@@ -44,7 +44,8 @@ struct CodeProcessor
     project_filters_2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Second projection for deep_plain
     dw_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third layer for deep_plain
     project_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third projection for deep_plain
-    mask_proj::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Projection to get mask logits from features
+    mask_proj::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Projection to get component-wise mask logits
+    channel_mask_proj::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 3}}  # Projection to get channel-wise mask logits
     mask_temp::DEFAULT_FLOAT_TYPE  # Gumbel-Softmax temperature
     mask_eta::DEFAULT_FLOAT_TYPE   # Right stretch for hard threshold
     mask_gamma::DEFAULT_FLOAT_TYPE # Left stretch for hard threshold
@@ -69,14 +70,19 @@ struct CodeProcessor
     )
         init_scale = DEFAULT_FLOAT_TYPE(0.01)
         
-        # Initialize mask projection if requested
+        # Initialize mask projections if requested
         if use_hard_mask
-            # 1×1 conv: out_channels -> out_channels
+            # Component-wise mask: 1×1 conv: out_channels -> out_channels
             # Output goes through sigmoid to get p_c ∈ [0,1]
             mask_proj = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                            (1, out_channels, 1, out_channels))
+            # Channel-wise mask: out_channels -> out_channels (no spatial dimension)
+            # Shape: (out_channels, out_channels, 1) for batched_mul
+            channel_mask_proj = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                                    (out_channels, out_channels, 1))
         else
             mask_proj = nothing
+            channel_mask_proj = nothing
         end
         
         # Soft threshold architecture
@@ -177,6 +183,7 @@ struct CodeProcessor
             dw_filters_3 = isnothing(dw_filters_3) ? nothing : cu(dw_filters_3)
             project_filters_3 = isnothing(project_filters_3) ? nothing : cu(project_filters_3)
             mask_proj = isnothing(mask_proj) ? nothing : cu(mask_proj)
+            channel_mask_proj = isnothing(channel_mask_proj) ? nothing : cu(channel_mask_proj)
             # Keep threshold_param on CPU for scalar access
         end
         
@@ -194,6 +201,7 @@ struct CodeProcessor
         num_params += isnothing(dw_filters_3) ? 0 : length(dw_filters_3)
         num_params += isnothing(project_filters_3) ? 0 : length(project_filters_3)
         num_params += isnothing(mask_proj) ? 0 : length(mask_proj)
+        num_params += isnothing(channel_mask_proj) ? 0 : length(channel_mask_proj)
         
         println("CodeProcessor ($arch_type): $num_params parameters")
         println("  - in_channels: $in_channels, out_channels: $out_channels")
@@ -203,19 +211,19 @@ struct CodeProcessor
         
         return new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                    gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                   dw_filters_3, project_filters_3, mask_proj, mask_temp, mask_eta,
-                   mask_gamma, use_hard_mask, use_residual, arch_type)
+                   dw_filters_3, project_filters_3, mask_proj, channel_mask_proj,
+                   mask_temp, mask_eta, mask_gamma, use_hard_mask, use_residual, arch_type)
     end
     
     # Positional constructor for Flux/Optimisers
     CodeProcessor(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
                   gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                  dw_filters_3, project_filters_3, mask_proj, mask_temp, mask_eta,
-                  mask_gamma, use_hard_mask, use_residual, arch_type) = 
+                  dw_filters_3, project_filters_3, mask_proj, channel_mask_proj,
+                  mask_temp, mask_eta, mask_gamma, use_hard_mask, use_residual, arch_type) = 
         new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
             gate_filters, threshold_param, dw_filters_2, project_filters_2,
-            dw_filters_3, project_filters_3, mask_proj, mask_temp, mask_eta,
-            mask_gamma, use_hard_mask, use_residual, arch_type)
+            dw_filters_3, project_filters_3, mask_proj, channel_mask_proj,
+            mask_temp, mask_eta, mask_gamma, use_hard_mask, use_residual, arch_type)
 end
 
 Flux.@layer CodeProcessor
@@ -281,6 +289,7 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
         # Output should match code dimensions
         out_channels = size(cp.project_filters, 4)
         identity_input = @view x[:, out_channels+1:end, :, :]
+        # code_input = @view x[:, 1:out_channels, :, :]
     end
     
     # Expansion (mbconv only)
@@ -374,9 +383,12 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
         x = x .+ identity_input
     end
     
+    # form grad-code prod
+    # x = x .* code_input
+
     # Apply hard mask AFTER residual (if enabled)
     if cp.use_hard_mask && !isnothing(cp.mask_proj)
-        # Learn mask probabilities from the OUTPUT features (after residual)
+        # Component-wise mask: Learn mask probabilities from the OUTPUT features (after residual)
         # x shape: (l, out_channels, 1, n)
         mask_logits = Flux.conv(x, cp.mask_proj; pad=0, flipped=true)
         # Output: (l, 1, out_channels, n) -> reshape to (l, out_channels, 1, n)
@@ -386,6 +398,14 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
         # Get probabilities: p_c = sigmoid(logits)
         # Shape: (l, out_channels, 1, n) - one probability per (spatial, channel, batch) position
         p_c = Flux.sigmoid.(mask_logits)
+        
+        # Channel-wise mask: Average features across spatial dimension, then project
+        # x shape: (l, out_channels, 1, n) -> average to (out_channels, 1, n)
+        x_avg = reshape(mean(x; dims=1), (size(x, 2), 1, size(x, 4)))
+        # Project: (out_channels, 1, n) -> (out_channels, 1, n)
+        channel_logits = Flux.NNlib.batched_mul(cp.channel_mask_proj, x_avg)
+        # Get channel probabilities
+        p_ch = Flux.sigmoid.(channel_logits)  # Shape: (out_channels, 1, n)
         
         if training
             # Temperature annealing based on training steps
@@ -397,40 +417,63 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
                           cp.mask_temp * DEFAULT_FLOAT_TYPE(0.9995)^step)
             end
             
-            # Gumbel(0,1) sampling: -log(-log(uniform))
+            # Component-wise Gumbel-Softmax
             gumbel = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p_c)...)))
             if x isa CuArray
                 gumbel = cu(gumbel)
             end
             
-            # Gumbel-Softmax: sigmoid((log(p) - log(1-p) + gumbel) / temp)
             logit_p = log.(p_c .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
                      log.(1 .- p_c .+ DEFAULT_FLOAT_TYPE(1e-8))
             s_c = Flux.sigmoid.((logit_p .+ gumbel) ./ temp)
             
-            # Stretch during training for smoother gradients
             z_c = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
                        s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
+            
+            # Channel-wise Gumbel-Softmax (same process)
+            gumbel_ch = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p_ch)...)))
+            if x isa CuArray
+                gumbel_ch = cu(gumbel_ch)
+            end
+            
+            logit_p_ch = log.(p_ch .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
+                        log.(1 .- p_ch .+ DEFAULT_FLOAT_TYPE(1e-8))
+            s_ch = Flux.sigmoid.((logit_p_ch .+ gumbel_ch) ./ temp)
+            
+            z_ch = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                       s_ch .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
         else
             # Test time: same pipeline as training but without Gumbel noise
             # Use minimum temperature (sharpest possible)
             temp = DEFAULT_FLOAT_TYPE(0.1)
             
-            # Deterministic logit transformation (no Gumbel)
+            # Component-wise deterministic
             logit_p = log.(p_c .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
                      log.(1 .- p_c .+ DEFAULT_FLOAT_TYPE(1e-8))
             s_c = Flux.sigmoid.(logit_p ./ temp)
             
-            # Stretch (same as training)
             z_c_soft = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
                        s_c .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
             
-            # Hard cutoff: truly binary {0, 1}
             z_c = DEFAULT_FLOAT_TYPE.(z_c_soft .> DEFAULT_FLOAT_TYPE(0.5))
+            
+            # Channel-wise deterministic (same process)
+            logit_p_ch = log.(p_ch .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
+                        log.(1 .- p_ch .+ DEFAULT_FLOAT_TYPE(1e-8))
+            s_ch = Flux.sigmoid.(logit_p_ch ./ temp)
+            
+            z_ch_soft = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                       s_ch .* (cp.mask_eta - cp.mask_gamma) .+ cp.mask_gamma))
+            
+            z_ch = DEFAULT_FLOAT_TYPE.(z_ch_soft .> DEFAULT_FLOAT_TYPE(0.5))
         end
         
-        # Apply mask directly (z_c already has same shape as x)
-        x = x .* z_c
+        # Combine masks: channel mask broadcasts to (1, out_channels, 1, n), then multiply
+        z_ch_broadcast = reshape(z_ch, (1, size(z_ch, 1), 1, size(z_ch, 3)))
+        combined_mask = z_c .* z_ch_broadcast
+        
+        # Apply combined mask
+        x = x .* combined_mask
     end
     
     return x
