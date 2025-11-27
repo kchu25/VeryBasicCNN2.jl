@@ -402,7 +402,8 @@ function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=n
         # Channel-wise mask: Average features across spatial dimension, then project
         # x shape: (l, out_channels, 1, n) -> average to (out_channels, 1, n)
         x_avg = reshape(mean(x; dims=1), (size(x, 2), 1, size(x, 4)))
-        # Project: (out_channels, 1, n) -> (out_channels, 1, n)
+        # Project: batched_mul(W, x_avg) where W: (out_channels, out_channels, 1), x_avg: (out_channels, 1, n)
+        # Output: (out_channels, 1, n) - one logit per channel per batch
         channel_logits = Flux.NNlib.batched_mul(cp.channel_mask_proj, x_avg)
         # Get channel probabilities
         p_ch = Flux.sigmoid.(channel_logits)  # Shape: (out_channels, 1, n)
