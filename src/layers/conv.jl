@@ -57,7 +57,7 @@ struct LearnedCodeImgFilters
         rng = Random.GLOBAL_RNG
     )
 
-        init_scale = DEFAULT_FLOAT_TYPE(0.01);
+        # init_scale = DEFAULT_FLOAT_TYPE(0.01);
         
         filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                       (filter_height, input_channels, 1, num_filters))
