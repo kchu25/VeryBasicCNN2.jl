@@ -44,10 +44,10 @@ function apply_gumbel_mask(cp::CodeProcessor, x; training::Bool=true, step::Unio
         end
         
         # Component-wise Gumbel-Softmax
-        z_c = gumbel_softmax_sample(p_c, temp, cp.mask_eta, cp.mask_gamma, x)
+        z_c = gumbel_softmax_sample(p_c, temp, cp.mask_eta, cp.mask_gamma)
         
         # Channel-wise Gumbel-Softmax
-        z_ch = gumbel_softmax_sample(p_ch, temp, cp.mask_eta, cp.mask_gamma, x)
+        z_ch = gumbel_softmax_sample(p_ch, temp, cp.mask_eta, cp.mask_gamma)
     else
         # Test time: deterministic hard masks
         temp = DEFAULT_FLOAT_TYPE(0.1)
@@ -64,7 +64,7 @@ function apply_gumbel_mask(cp::CodeProcessor, x; training::Bool=true, step::Unio
 end
 
 """
-    gumbel_softmax_sample(p, temp, eta, gamma, reference_array)
+    gumbel_softmax_sample(p, temp, eta, gamma)
 
 Sample from Gumbel-Softmax distribution for soft masking.
 
@@ -72,14 +72,13 @@ Sample from Gumbel-Softmax distribution for soft masking.
 - `p`: Probabilities
 - `temp`: Temperature
 - `eta, gamma`: Stretch parameters for hard threshold
-- `reference_array`: Reference for device placement (CPU/GPU)
 
 # Returns
 - Soft mask values
 """
-function gumbel_softmax_sample(p, temp, eta, gamma, reference_array)
+function gumbel_softmax_sample(p, temp, eta, gamma)
     gumbel = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p)...)))
-    if reference_array isa CuArray
+    if p isa CuArray
         gumbel = cu(gumbel)
     end
     
