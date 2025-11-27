@@ -37,7 +37,7 @@ export SeqCNN
 export HyperParameters, HyperParamRanges
 export LearnedPWMs, LearnedCodeImgFilters, MBConvBlock
 export CodeProcessor, CodeProcessorType
-export plain, resnet, mbconv, soft_threshold, deep_plain
+export plain, resnet, mbconv, deep_plain
 
 # Hyperparameter functions
 export generate_random_hyperparameters

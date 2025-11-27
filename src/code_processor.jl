@@ -12,10 +12,9 @@ Type of architecture for code processing.
 - `:plain`: Simple depthwise convolution
 - `:resnet`: Depthwise conv with residual connection
 - `:mbconv`: MBConv-style with expansion and SE attention
-- `:soft_threshold`: Learnable soft thresholding with gating
 - `:deep_plain`: Stacked plain layers (2 layers for more capacity)
 """
-@enum CodeProcessorType plain resnet mbconv soft_threshold deep_plain
+@enum CodeProcessorType plain resnet mbconv deep_plain
 
 """
     CodeProcessor
@@ -27,10 +26,8 @@ Network for processing concatenated code and gradient features.
 - `dw_filters`: Depthwise convolution filters
 - `se_w1, se_w2`: Squeeze-excitation weights (optional, for mbconv)
 - `project_filters`: Channel projection back to output size
-- `gate_filters`: Gating filters (optional, for soft_threshold)
-- `threshold_param`: Learnable threshold parameter (optional, for soft_threshold)
 - `use_residual`: Whether to use skip connection
-- `arch_type`: Architecture type (:plain, :resnet, :mbconv, :soft_threshold)
+- `arch_type`: Architecture type (:plain, :resnet, :mbconv, :deep_plain)
 """
 struct CodeProcessor
     expand_filters::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}
@@ -38,8 +35,6 @@ struct CodeProcessor
     se_w1::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 3}}
     se_w2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 3}}
     project_filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
-    gate_filters::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}
-    threshold_param::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 1}}
     dw_filters_2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Second layer for deep_plain
     project_filters_2::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Second projection for deep_plain
     dw_filters_3::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 4}}  # Third layer for deep_plain
@@ -85,90 +80,66 @@ struct CodeProcessor
             channel_mask_proj = nothing
         end
         
-        # Soft threshold architecture
-        if arch_type == soft_threshold
-            # Gate filters to learn importance of gradient features
-            gate_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                              (1, out_channels, 1, out_channels))
-            # Learnable threshold - initialize to small positive value
-            threshold_param = fill(DEFAULT_FLOAT_TYPE(0.1), 1)
-            
-            # Simple projection from concatenated to output
+        # For mbconv, resnet, plain, and deep_plain architectures
+        # Deep plain: 3 stacked layers
+        if arch_type == deep_plain
+            # First layer: 2C → C
+            dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                             (kernel_size, 1, 1, in_channels))
             project_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
                                                  (1, in_channels, 1, out_channels))
-            
-            # No expansion, depthwise, or SE for this architecture
+            # Second layer: C → C  
+            dw_filters_2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                               (kernel_size, 1, 1, out_channels))
+            project_filters_2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                                   (1, out_channels, 1, out_channels))
+            # Third layer: C → C
+            dw_filters_3 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                               (kernel_size, 1, 1, out_channels))
+            project_filters_3 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                                   (1, out_channels, 1, out_channels))
             expand_filters = nothing
-            dw_filters = zeros(DEFAULT_FLOAT_TYPE, (1, 1, 1, 1))  # Dummy
             se_w1 = nothing
             se_w2 = nothing
-            use_residual = false
-            
+            use_residual = true  # Use residual for deep network
         else
-            # For mbconv, resnet, plain, and deep_plain architectures
-            gate_filters = nothing
-            threshold_param = nothing
-            
-            # Deep plain: 3 stacked layers
-            if arch_type == deep_plain
-                # First layer: 2C → C
-                dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                 (kernel_size, 1, 1, in_channels))
-                project_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                     (1, in_channels, 1, out_channels))
-                # Second layer: C → C  
-                dw_filters_2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                   (kernel_size, 1, 1, out_channels))
-                project_filters_2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                       (1, out_channels, 1, out_channels))
-                # Third layer: C → C
-                dw_filters_3 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                   (kernel_size, 1, 1, out_channels))
-                project_filters_3 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                       (1, out_channels, 1, out_channels))
+            # For mbconv, resnet, plain
+            # Expansion (only for mbconv)
+            if arch_type == mbconv
+                expanded = in_channels * expansion_ratio
+                expand_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, 
+                                                     (1, in_channels, 1, expanded))
+            else
+                expanded = in_channels
                 expand_filters = nothing
+            end
+            
+            # Depthwise filters
+            dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                             (kernel_size, 1, 1, expanded))
+            
+            # Squeeze-Excitation (only for mbconv if use_se=true)
+            if arch_type == mbconv && use_se
+                se_channels = max(1, floor(Int, expanded / se_ratio))
+                se_w1 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (se_channels, expanded, 1))
+                se_w2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (expanded, se_channels, 1))
+            else
                 se_w1 = nothing
                 se_w2 = nothing
-                use_residual = true  # Use residual for deep network
-            else
-                # For mbconv, resnet, plain
-                # Expansion (only for mbconv)
-                if arch_type == mbconv
-                    expanded = in_channels * expansion_ratio
-                    expand_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, 
-                                                         (1, in_channels, 1, expanded))
-                else
-                    expanded = in_channels
-                    expand_filters = nothing
-                end
-                
-                # Depthwise filters
-                dw_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                 (kernel_size, 1, 1, expanded))
-                
-                # Squeeze-Excitation (only for mbconv if use_se=true)
-                if arch_type == mbconv && use_se
-                    se_channels = max(1, floor(Int, expanded / se_ratio))
-                    se_w1 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (se_channels, expanded, 1))
-                    se_w2 = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, (expanded, se_channels, 1))
-                else
-                    se_w1 = nothing
-                    se_w2 = nothing
-                end
-                
-                # Projection to output channels
-                project_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
-                                                     (1, expanded, 1, out_channels))
-                
-                # No second/third layer for these architectures
-                dw_filters_2 = nothing
-                project_filters_2 = nothing
-                dw_filters_3 = nothing
-                project_filters_3 = nothing
-                
-                # Residual connection only for resnet and mbconv
-                use_residual = (arch_type in [resnet, mbconv])
             end
+            
+            # Projection to output channels
+            project_filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE,
+                                                 (1, expanded, 1, out_channels))
+            
+            # No second/third layer for these architectures
+            dw_filters_2 = nothing
+            project_filters_2 = nothing
+            dw_filters_3 = nothing
+            project_filters_3 = nothing
+            
+            # Residual connection only for resnet and mbconv
+            use_residual = (arch_type in [resnet, mbconv])
         end
         
         if use_cuda
@@ -177,14 +148,12 @@ struct CodeProcessor
             se_w1 = isnothing(se_w1) ? nothing : cu(se_w1)
             se_w2 = isnothing(se_w2) ? nothing : cu(se_w2)
             project_filters = cu(project_filters)
-            gate_filters = isnothing(gate_filters) ? nothing : cu(gate_filters)
             dw_filters_2 = isnothing(dw_filters_2) ? nothing : cu(dw_filters_2)
             project_filters_2 = isnothing(project_filters_2) ? nothing : cu(project_filters_2)
             dw_filters_3 = isnothing(dw_filters_3) ? nothing : cu(dw_filters_3)
             project_filters_3 = isnothing(project_filters_3) ? nothing : cu(project_filters_3)
             mask_proj = isnothing(mask_proj) ? nothing : cu(mask_proj)
             channel_mask_proj = isnothing(channel_mask_proj) ? nothing : cu(channel_mask_proj)
-            # Keep threshold_param on CPU for scalar access
         end
         
         # Count parameters
@@ -194,8 +163,6 @@ struct CodeProcessor
         num_params += isnothing(se_w1) ? 0 : length(se_w1)
         num_params += isnothing(se_w2) ? 0 : length(se_w2)
         num_params += length(project_filters)
-        num_params += isnothing(gate_filters) ? 0 : length(gate_filters)
-        num_params += isnothing(threshold_param) ? 0 : length(threshold_param)
         num_params += isnothing(dw_filters_2) ? 0 : length(dw_filters_2)
         num_params += isnothing(project_filters_2) ? 0 : length(project_filters_2)
         num_params += isnothing(dw_filters_3) ? 0 : length(dw_filters_3)
@@ -210,20 +177,20 @@ struct CodeProcessor
         end
         
         return new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
-                   gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                   dw_filters_3, project_filters_3, mask_proj, channel_mask_proj,
-                   mask_temp, mask_eta, mask_gamma, use_hard_mask, use_residual, arch_type)
+                   dw_filters_2, project_filters_2, dw_filters_3, project_filters_3,
+                   mask_proj, channel_mask_proj, mask_temp, mask_eta, mask_gamma,
+                   use_hard_mask, use_residual, arch_type)
     end
     
     # Positional constructor for Flux/Optimisers
     CodeProcessor(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
-                  gate_filters, threshold_param, dw_filters_2, project_filters_2,
-                  dw_filters_3, project_filters_3, mask_proj, channel_mask_proj,
-                  mask_temp, mask_eta, mask_gamma, use_hard_mask, use_residual, arch_type) = 
+                  dw_filters_2, project_filters_2, dw_filters_3, project_filters_3,
+                  mask_proj, channel_mask_proj, mask_temp, mask_eta, mask_gamma,
+                  use_hard_mask, use_residual, arch_type) = 
         new(expand_filters, dw_filters, se_w1, se_w2, project_filters, 
-            gate_filters, threshold_param, dw_filters_2, project_filters_2,
-            dw_filters_3, project_filters_3, mask_proj, channel_mask_proj,
-            mask_temp, mask_eta, mask_gamma, use_hard_mask, use_residual, arch_type)
+            dw_filters_2, project_filters_2, dw_filters_3, project_filters_3,
+            mask_proj, channel_mask_proj, mask_temp, mask_eta, mask_gamma,
+            use_hard_mask, use_residual, arch_type)
 end
 
 Flux.@layer CodeProcessor
@@ -248,40 +215,6 @@ Forward pass through code processor.
 """
 function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=nothing)
     l, M, _, n = size(x)  # (spatial, channels, 1, batch)
-    
-    # Soft threshold architecture
-    if cp.arch_type == soft_threshold # TODO remove it
-        C = M ÷ 2  # Split point between code and gradient
-        code = x[:, 1:C, :, :]
-        grad = x[:, C+1:end, :, :]
-        
-        # Extract threshold value (kept on CPU for easy access)
-        threshold = abs(cp.threshold_param[1])
-        
-        # Learn to gate based on CODE PATTERNS (not gradient itself!)
-        # This learns which gradient features are useful given the code context
-        gate_logits = Flux.conv(code, cp.gate_filters; pad=0, flipped=true)
-        # After 1x1 conv: (l, 1, C, n) -> reshape to (l, C, 1, n)
-        gate_logits = reshape(gate_logits, (size(gate_logits, 1), size(gate_logits, 3), 1, size(gate_logits, 4)))
-        
-        # Sigmoid to get gates in [0, 1]
-        gates = Flux.sigmoid.(gate_logits)
-        
-        # Apply threshold: gates below threshold → 0 (sparse!)
-        gates = gates .* (gates .> threshold)
-        
-        # Apply learned sparse gates to gradient
-        modulated_grad = grad .* gates
-        
-        # Combine code with gated gradient
-        combined = cat(code, modulated_grad; dims=2)
-        
-        # Project to output
-        output = Flux.conv(combined, cp.project_filters; pad=0, flipped=true)
-        output = reshape(output, (l, size(cp.project_filters, 4), 1, n))
-        
-        return output
-    end
     
     # For residual, need to extract gradient portion (first half of channels)
     if cp.use_residual
