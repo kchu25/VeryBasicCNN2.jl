@@ -1,6 +1,7 @@
 # ============================================================================
-# Gumbel-Softmax Masking Logic (Shared Across Architectures)
+# Gumbel-Softmax Masking Logic (CodeProcessor-specific)
 # ============================================================================
+# Note: gumbel_softmax_sample() and hard_threshold_mask() are in utils.jl
 
 """
     apply_gumbel_mask(cp::CodeProcessor, x; training::Bool=true, step::Union{Nothing, Int}=nothing)
@@ -61,55 +62,4 @@ function apply_gumbel_mask(cp::CodeProcessor, x; training::Bool=true, step::Unio
     
     # Apply combined mask
     return x .* combined_mask
-end
-
-"""
-    gumbel_softmax_sample(p, temp, eta, gamma)
-
-Sample from Gumbel-Softmax distribution for soft masking.
-
-# Arguments
-- `p`: Probabilities
-- `temp`: Temperature
-- `eta, gamma`: Stretch parameters for hard threshold
-
-# Returns
-- Soft mask values
-"""
-function gumbel_softmax_sample(p, temp, eta, gamma)
-    gumbel = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p)...)))
-    if p isa CuArray
-        gumbel = cu(gumbel)
-    end
-    
-    logit_p = log.(p .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
-             log.(1 .- p .+ DEFAULT_FLOAT_TYPE(1e-8))
-    s = Flux.sigmoid.((logit_p .+ gumbel) ./ temp)
-    
-    return min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
-                s .* (eta - gamma) .+ gamma))
-end
-
-"""
-    hard_threshold_mask(p, temp, eta, gamma)
-
-Generate hard binary mask from probabilities (test time).
-
-# Arguments
-- `p`: Probabilities
-- `temp`: Temperature (sharpening)
-- `eta, gamma`: Stretch parameters
-
-# Returns
-- Hard binary mask (0 or 1)
-"""
-function hard_threshold_mask(p, temp, eta, gamma)
-    logit_p = log.(p .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
-             log.(1 .- p .+ DEFAULT_FLOAT_TYPE(1e-8))
-    s = Flux.sigmoid.(logit_p ./ temp)
-    
-    z_soft = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
-                  s .* (eta - gamma) .+ gamma))
-    
-    return DEFAULT_FLOAT_TYPE.(z_soft .> DEFAULT_FLOAT_TYPE(0.5))
 end

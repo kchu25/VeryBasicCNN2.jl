@@ -1,4 +1,73 @@
 # ============================================================================
+# Gumbel-Softmax Masking Utilities
+# ============================================================================
+
+"""
+    gumbel_softmax_sample(p, temp, eta, gamma)
+
+Sample from Gumbel-Softmax distribution for soft masking.
+
+# Arguments
+- `p`: Probabilities (any array type, CPU or GPU)
+- `temp`: Temperature (lower = sharper, higher = softer)
+- `eta`: Right stretch parameter for hard threshold
+- `gamma`: Left stretch parameter for hard threshold
+
+# Returns
+- Soft mask values in [0, 1]
+
+# Example
+```julia
+p = sigmoid.(randn(32, 1, 1))  # Channel probabilities
+z = gumbel_softmax_sample(p, 0.5, 1.0, 0.0)  # Soft masks
+```
+"""
+function gumbel_softmax_sample(p, temp, eta, gamma)
+    gumbel = -log.(-log.(rand(DEFAULT_FLOAT_TYPE, size(p)...)))
+    if p isa CuArray
+        gumbel = cu(gumbel)
+    end
+    
+    logit_p = log.(p .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
+             log.(1 .- p .+ DEFAULT_FLOAT_TYPE(1e-8))
+    s = Flux.sigmoid.((logit_p .+ gumbel) ./ temp)
+    
+    return min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                s .* (eta - gamma) .+ gamma))
+end
+
+"""
+    hard_threshold_mask(p, temp, eta, gamma)
+
+Generate hard binary mask from probabilities (test time, no Gumbel noise).
+
+# Arguments
+- `p`: Probabilities
+- `temp`: Temperature for sharpening (typically 0.1 at test time)
+- `eta`: Right stretch parameter
+- `gamma`: Left stretch parameter
+
+# Returns
+- Hard binary mask (0.0 or 1.0)
+
+# Example
+```julia
+p = sigmoid.(randn(32, 1, 1))
+z = hard_threshold_mask(p, 0.1, 1.0, 0.0)  # Binary: 0 or 1
+```
+"""
+function hard_threshold_mask(p, temp, eta, gamma)
+    logit_p = log.(p .+ DEFAULT_FLOAT_TYPE(1e-8)) .- 
+             log.(1 .- p .+ DEFAULT_FLOAT_TYPE(1e-8))
+    s = Flux.sigmoid.(logit_p ./ temp)
+    
+    z_soft = min.(DEFAULT_FLOAT_TYPE(1), max.(DEFAULT_FLOAT_TYPE(0), 
+                  s .* (eta - gamma) .+ gamma))
+    
+    return DEFAULT_FLOAT_TYPE.(z_soft .> DEFAULT_FLOAT_TYPE(0.5))
+end
+
+# ============================================================================
 # Dimension Calculation Utilities
 # ============================================================================
 
