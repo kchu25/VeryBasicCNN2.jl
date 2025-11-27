@@ -26,7 +26,7 @@ include("model.jl")
 include("forward.jl")
 include("loss.jl")
 include("convert.jl")
-include("code_processor.jl")
+include("processors/processor.jl")
 
 # ============================================================================
 # Exports
