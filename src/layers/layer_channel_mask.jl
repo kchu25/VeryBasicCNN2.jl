@@ -23,7 +23,7 @@ end
 Flux.@layer layer_channel_mask
 Flux.trainable(l::layer_channel_mask) = (l.mixing_filter,)
 
-function (l::layer_channel_mask)(code)
+function (l::layer_channel_mask; training=true)(code)
     if size(code, 1) == 1
         in_channels = size(code, 3)
         code = reshape(code, (size(code, 2), in_channels, 1, size(code, 4)))
@@ -32,6 +32,14 @@ function (l::layer_channel_mask)(code)
     end
 
     z = conv(code, l.mixing_filter; pad=0, flipped=true)  # (length, 1, channels, batch)
-
+    z = reshape(z, (size(z, 1), in_channels, 1, size(z, 4)))  # (length, channels, 1, batch)    
+    z = sum(z, dims=1) # shape (1, channels, 1, batch)
+    mask = sigmoid.(z)
+    if training
+        mask = gumbel_softmax_sample(mask, l.temp, l.eta, l.gamma) # soft mask
+    else
+        mask = hard_threshold_mask(mask, l.temp, l.eta, l.gamma) # hard mask
+    end
+    return code .* mask
 end
 
