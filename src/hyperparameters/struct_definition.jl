@@ -28,6 +28,7 @@ CNN hyperparameters for biological sequence analysis.
 
 # Normalization Fields
 - `use_layernorm::Bool`: Apply LayerNorm after pooling for layers > inference_code_layer (default: false)
+- `use_channel_mask::Bool`: Apply channel masking to PWM and conv layers (default: true)
 
 # MBConv Fields
 - `num_mbconv::Int`: Number of MBConv blocks to add (0 = none, default)
@@ -55,6 +56,7 @@ Base.@kwdef struct HyperParameters
     
     # Normalization
     use_layernorm::Bool = false  # Apply LayerNorm after inference_code_layer
+    use_channel_mask::Bool = false  # Apply channel masking to layers
     
     # MBConv (optional EfficientNet-style blocks)
     num_mbconv::Int = 0

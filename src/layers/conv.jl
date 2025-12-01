@@ -38,14 +38,16 @@ Learnable convolutional filters for intermediate CNN layers.
 - `filters`: 4D array (height, width, 1, num_filters)
 - `ln_gamma`: LayerNorm scale parameter (optional, per channel)
 - `ln_beta`: LayerNorm shift parameter (optional, per channel)
+- `mask`: Channel masking layer (optional)
 
 # Forward Pass
-Applies normalized convolution followed by ReLU activation, optionally with LayerNorm.
+Applies normalized convolution followed by ReLU activation, optionally with LayerNorm and channel masking.
 """
 struct LearnedCodeImgFilters
     filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
     ln_gamma::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 1}}
     ln_beta::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 1}}
+    mask::Union{Nothing, layer_channel_mask}
     
     function LearnedCodeImgFilters(;
         input_channels::Int,
@@ -53,6 +55,7 @@ struct LearnedCodeImgFilters
         num_filters::Int,
         init_scale::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.01),
         use_layernorm::Bool = false,
+        use_channel_mask::Bool = false,
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
     )
@@ -70,22 +73,43 @@ struct LearnedCodeImgFilters
             ln_gamma = nothing
             ln_beta = nothing
         end
+        
+        # Initialize channel mask if requested (uses defaults)
+        if use_channel_mask
+            mask = layer_channel_mask(num_filters; rng=rng)
+        else
+            mask = nothing
+        end
 
         if use_cuda
             filters = cu(filters)
             ln_gamma = isnothing(ln_gamma) ? nothing : cu(ln_gamma)
             ln_beta = isnothing(ln_beta) ? nothing : cu(ln_beta)
+            if !isnothing(mask)
+                mask = mask |> gpu
+            end
         end
         
-        return new(filters, ln_gamma, ln_beta)
+        return new(filters, ln_gamma, ln_beta, mask)
     end
     
-    # Direct constructor for loading models (backward compatibility)
-    LearnedCodeImgFilters(filters) = new(filters, nothing, nothing)
-    LearnedCodeImgFilters(filters, ln_gamma, ln_beta) = new(filters, ln_gamma, ln_beta)
+    # Direct constructors for loading models (backward compatibility)
+    LearnedCodeImgFilters(filters) = new(filters, nothing, nothing, nothing)
+    LearnedCodeImgFilters(filters, ln_gamma, ln_beta) = new(filters, ln_gamma, ln_beta, nothing)
+    LearnedCodeImgFilters(filters, ln_gamma, ln_beta, mask) = new(filters, ln_gamma, ln_beta, mask)
 end
 
 Flux.@layer LearnedCodeImgFilters
+Flux.trainable(l::LearnedCodeImgFilters) = begin
+    params = (filters = l.filters,)
+    if !isnothing(l.ln_gamma)
+        params = merge(params, (ln_gamma = l.ln_gamma, ln_beta = l.ln_beta))
+    end
+    if !isnothing(l.mask)
+        params = merge(params, (mask = l.mask,))
+    end
+    return params
+end
 
 """
     prepare_conv_params(conv_filters::LearnedCodeImgFilters, hp::HyperParameters; use_sparsity=false)
@@ -103,7 +127,7 @@ function prepare_conv_params(conv_filters::LearnedCodeImgFilters, hp::HyperParam
 end
 
 """
-    (conv_filters::LearnedCodeImgFilters)(code_input, hp::HyperParameters; use_sparsity=false)
+    (conv_filters::LearnedCodeImgFilters)(code_input, hp::HyperParameters; use_sparsity=false, training::Bool=true)
 
 Forward pass through convolutional layer.
 
@@ -111,14 +135,28 @@ Forward pass through convolutional layer.
 1. L2-normalize filters (optionally with sparsity)
 2. Convolve with input code
 3. Apply ReLU activation
+4. Optional channel masking (if enabled)
+
+# Arguments
+- `code_input`: Input features
+- `hp`: Hyperparameters
+- `use_sparsity`: Whether to apply sparsity weighting
+- `training`: Whether in training mode (affects masking)
 
 # Returns
 - Activated code (4D: height, width, filters, batch)
 """
 function (conv_filters::LearnedCodeImgFilters)(code_input, hp::HyperParameters; 
-                                                use_sparsity=false)
+                                                use_sparsity=false,
+                                                training::Bool=true)
     normalized_filters = prepare_conv_params(conv_filters, hp; use_sparsity=use_sparsity)
     gradient = conv(code_input, normalized_filters; pad=0, flipped=true)
     code = Flux.NNlib.relu(gradient)
+    
+    # Apply channel mask if present
+    if !isnothing(conv_filters.mask)
+        code = conv_filters.mask(code; training=training)
+    end
+    
     return code
 end

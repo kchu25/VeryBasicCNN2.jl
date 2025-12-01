@@ -45,6 +45,7 @@ struct SeqCNN
     mbconv_blocks::Vector{MBConvBlock}
     output_weights::AbstractArray{DEFAULT_FLOAT_TYPE, 3}
     final_nonlinearity::Function
+    training::Ref{Bool}  # Mutable flag for training mode
     
     function SeqCNN(
         hp::HyperParameters,
@@ -63,6 +64,7 @@ struct SeqCNN
             filter_height = alphabet_size,
             num_filters = hp.num_pfms,
             init_scale = init_scale,
+            use_channel_mask = hp.use_channel_mask,
             use_cuda = use_cuda,
             rng = rng
         )
@@ -73,8 +75,9 @@ struct SeqCNN
                 input_channels = hp.img_fil_widths[i],
                 filter_height = hp.img_fil_heights[i],
                 num_filters = hp.num_img_filters[i],
-                init_scale = init_scale,
+                # init_scale = init_scale,
                 use_layernorm = (hp.use_layernorm && i > hp.inference_code_layer),
+                use_channel_mask = hp.use_channel_mask,
                 use_cuda = use_cuda,
                 rng = rng
             ) for i in 1:num_layers(hp)
@@ -107,12 +110,19 @@ struct SeqCNN
             output_weights = cu(output_weights)
         end
 
-        return new(hp, pwms, conv_layers, mbconv_blocks, output_weights, identity)
+        # Create model and report parameter count
+        model = new(hp, pwms, conv_layers, mbconv_blocks, output_weights, identity, Ref(true))
+        @info "Model created with $(count_parameters(model)) trainable parameters"
+        
+        return model
     end
     
-    # Direct constructor for model loading/conversion
+    # Direct constructors for model loading/conversion (backward compatibility)
     SeqCNN(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity=identity) = 
-        new(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity)
+        new(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity, Ref(true))
+    
+    SeqCNN(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity, training) = 
+        new(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity, training)
 end
 
 Flux.@layer SeqCNN
@@ -124,6 +134,166 @@ Flux.trainable(m::SeqCNN) = (
     mbconv_blocks = m.mbconv_blocks,
     output_weights = m.output_weights
 )
+
+# Training mode control
+"""
+    train!(model::SeqCNN)
+
+Set model to training mode (uses soft Gumbel-Softmax masks).
+"""
+train!(m::SeqCNN) = (m.training[] = true; m)
+
+"""
+    eval!(model::SeqCNN)
+
+Set model to evaluation mode (uses hard binary masks).
+"""
+eval!(m::SeqCNN) = (m.training[] = false; m)
+
+"""
+    is_training(model::SeqCNN)
+
+Check if model is in training mode.
+"""
+is_training(m::SeqCNN) = m.training[]
+
+# ============================================================================
+# Model Parameter Counting
+# ============================================================================
+
+"""
+    count_parameters(model::SeqCNN)
+
+Count total trainable parameters in the model.
+
+# Returns
+- Total number of trainable parameters
+
+# Example
+```julia
+model = SeqCNN(hp, (4, 41), 244)
+n_params = count_parameters(model)
+println("Model has \$n_params trainable parameters")
+```
+"""
+function count_parameters(model::SeqCNN)
+    total = 0
+    
+    # PWM parameters
+    total += length(model.pwms.filters)
+    total += length(model.pwms.activation_scaler)
+    if !isnothing(model.pwms.mask)
+        total += length(model.pwms.mask.mixing_filter)
+    end
+    
+    # Conv layer parameters
+    for layer in model.conv_layers
+        total += length(layer.filters)
+        if !isnothing(layer.ln_gamma)
+            total += length(layer.ln_gamma) + length(layer.ln_beta)
+        end
+        if !isnothing(layer.mask)
+            total += length(layer.mask.mixing_filter)
+        end
+    end
+    
+    # MBConv parameters
+    for block in model.mbconv_blocks
+        total += length(block.expand_filters)
+        total += length(block.dw_filters)
+        total += length(block.se_w1) + length(block.se_w2)
+        total += length(block.project_filters)
+    end
+    
+    # Output layer
+    total += length(model.output_weights)
+    
+    return total
+end
+
+"""
+    print_model_summary(model::SeqCNN)
+
+Print a summary of model architecture and parameter count.
+
+# Example
+```julia
+model = SeqCNN(hp, (4, 41), 244)
+print_model_summary(model)
+```
+"""
+function print_model_summary(model::SeqCNN)
+    println("="^60)
+    println("SeqCNN Model Summary")
+    println("="^60)
+    
+    # Architecture
+    println("\n📐 Architecture:")
+    println("  Base Layer: $(model.hp.num_pfms) PWMs × $(model.hp.pfm_len)nt")
+    println("  Conv Layers: $(model.num_conv_layers)")
+    println("  MBConv Blocks: $(length(model.mbconv_blocks))")
+    
+    # Parameter counts by component
+    println("\n🔢 Parameters:")
+    
+    # PWM
+    pwm_params = length(model.pwms.filters) + length(model.pwms.activation_scaler)
+    if !isnothing(model.pwms.mask)
+        pwm_params += length(model.pwms.mask.mixing_filter)
+    end
+    println("  PWM Layer: $(pwm_params)")
+    
+    # Conv layers
+    conv_params = sum(length(layer.filters) for layer in model.conv_layers)
+    for layer in model.conv_layers
+        if !isnothing(layer.ln_gamma)
+            conv_params += length(layer.ln_gamma) + length(layer.ln_beta)
+        end
+        if !isnothing(layer.mask)
+            conv_params += length(layer.mask.mixing_filter)
+        end
+    end
+    println("  Conv Layers: $(conv_params)")
+    
+    # MBConv
+    mbconv_params = 0
+    for block in model.mbconv_blocks
+        mbconv_params += length(block.expand_filters) + length(block.dw_filters)
+        mbconv_params += length(block.se_w1) + length(block.se_w2)
+        mbconv_params += length(block.project_filters)
+    end
+    if mbconv_params > 0
+        println("  MBConv Blocks: $(mbconv_params)")
+    end
+    
+    # Output
+    output_params = length(model.output_weights)
+    println("  Output Layer: $(output_params)")
+    
+    total = count_parameters(model)
+    println("\n  ✓ Total: $(total) parameters")
+    
+    # Training mode
+    mode = model.training[] ? "Training" : "Evaluation"
+    println("\n🎯 Mode: $(mode)")
+    
+    # Optional features
+    features = String[]
+    if model.hp.use_layernorm
+        push!(features, "LayerNorm")
+    end
+    if model.hp.use_channel_mask
+        push!(features, "Channel Masking")
+    end
+    if length(model.mbconv_blocks) > 0
+        push!(features, "MBConv")
+    end
+    if !isempty(features)
+        println("⚡ Features: ", join(features, ", "))
+    end
+    
+    println("="^60)
+end
 
 # ============================================================================
 # Model Properties (via getproperty)

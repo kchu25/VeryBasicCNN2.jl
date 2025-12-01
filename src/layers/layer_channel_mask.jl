@@ -47,7 +47,7 @@ struct layer_channel_mask
 end
 
 Flux.@layer layer_channel_mask
-Flux.trainable(l::layer_channel_mask) = (l.mixing_filter,)
+Flux.trainable(l::layer_channel_mask) = (mixing_filter = l.mixing_filter,)
 
 """
     (l::layer_channel_mask)(code; training=true)
@@ -62,14 +62,19 @@ Forward pass through channel masking layer.
 - Masked features with same shape as input
 """
 function (l::layer_channel_mask)(code; training=true)
+    # Save original shape for restoration at the end
+    original_shape = size(code)
+    is_pwm_format = size(code, 1) == 1  # Track if input was (1, length, channels, batch)
+    
     # Normalize input to (length, channels, 1, batch) format
-    if size(code, 1) == 1
+    if is_pwm_format
         # PWM-style input: (1, length, channels, batch)
         num_channels = size(code, 3)
         code = reshape(code, (size(code, 2), num_channels, 1, size(code, 4)))
     else
-        # Conv-style input: (length, channels, 1, batch)
-        num_channels = size(code, 2)
+        # Conv-style input: (length, 1, channels, batch)
+        num_channels = size(code, 3)
+        code = reshape(code, (size(code, 1), num_channels, 1, size(code, 4)))
     end
     
     # Apply channel mixing via 1×1 conv
@@ -96,7 +101,16 @@ function (l::layer_channel_mask)(code; training=true)
     end
     
     # Apply mask (broadcasts over spatial dimension)
-    return code .* mask
+    masked_code = code .* mask
+    
+    # Reshape back to original format if needed
+    if is_pwm_format
+        masked_code = reshape(masked_code, original_shape)
+    else
+        masked_code = reshape(masked_code, original_shape)
+    end
+    
+    return masked_code
 end
 
 

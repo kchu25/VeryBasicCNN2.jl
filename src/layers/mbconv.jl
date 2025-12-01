@@ -72,6 +72,13 @@ struct MBConvBlock
 end
 
 Flux.@layer MBConvBlock
+Flux.trainable(mb::MBConvBlock) = (
+    expand_filters = mb.expand_filters,
+    dw_filters = mb.dw_filters,
+    se_w1 = mb.se_w1,
+    se_w2 = mb.se_w2,
+    project_filters = mb.project_filters
+)
 
 function (mb::MBConvBlock)(x)
     identity_input = x

@@ -2,7 +2,7 @@
 # Learnable PWM Layer (Base Layer)
 # ============================================================================
 
-"""
+""" 
     LearnedPWMs
 
 Learnable Position Weight Matrices for the first CNN layer.
@@ -10,19 +10,23 @@ Learnable Position Weight Matrices for the first CNN layer.
 # Fields
 - `filters`: 4D array (alphabet_size, motif_len, 1, num_filters)
 - `activation_scaler`: Scalar activation parameter
+- `mask`: Channel masking layer (optional)
 
 # Forward Pass
-Applies PWM convolution followed by ReLU activation scaled by learned parameter.
+Applies PWM convolution followed by ReLU activation scaled by learned parameter,
+optionally with channel masking.
 """
 struct LearnedPWMs
     filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
     activation_scaler::AbstractArray{DEFAULT_FLOAT_TYPE, 1}
+    mask::Union{Nothing, layer_channel_mask}
     
     function LearnedPWMs(;
         filter_width::Int,
         filter_height::Int = 4,
         num_filters::Int,
         init_scale::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(1e-1),
+        use_channel_mask::Bool = false,
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
     )
@@ -30,19 +34,38 @@ struct LearnedPWMs
         filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, 
                                       (filter_height, filter_width, 1, num_filters))
         scaler = init_scale .* rand(rng, DEFAULT_FLOAT_TYPE, 1)
+        
+        # Initialize channel mask if requested (uses defaults)
+        if use_channel_mask
+            mask = layer_channel_mask(num_filters; rng=rng)
+        else
+            mask = nothing
+        end
 
         if use_cuda
             filters = cu(filters)
+            if !isnothing(mask)
+                mask = mask |> gpu
+            end
         end
 
-        return new(filters, scaler)
+        return new(filters, scaler, mask)
     end
     
-    # Direct constructor for loading models
-    LearnedPWMs(filters, scaler) = new(filters, scaler)
+    # Direct constructors for loading models
+    LearnedPWMs(filters, scaler) = new(filters, scaler, nothing)
+    LearnedPWMs(filters, scaler, mask) = new(filters, scaler, mask)
 end
 
 Flux.@layer LearnedPWMs
+
+Flux.trainable(l::LearnedPWMs) = begin
+    params = (filters = l.filters, activation_scaler = l.activation_scaler)
+    if !isnothing(l.mask)
+        params = merge(params, (mask = l.mask,))
+    end
+    return params
+end
 
 """
     prepare_pwm_params(pwms::LearnedPWMs; reverse_comp=false)
@@ -60,7 +83,7 @@ function prepare_pwm_params(pwms::LearnedPWMs; reverse_comp=false)
 end
 
 """
-    (pwms::LearnedPWMs)(sequences; reverse_comp=false)
+    (pwms::LearnedPWMs)(sequences; reverse_comp=false, training::Bool=true)
 
 Forward pass through PWM layer.
 
@@ -68,13 +91,25 @@ Forward pass through PWM layer.
 1. Create PWM from learned frequencies
 2. Convolve with input sequences  
 3. Apply ReLU with learned scaling
+4. Optional channel masking (if enabled)
+
+# Arguments
+- `sequences`: Input sequences
+- `reverse_comp`: Whether to use reverse complement
+- `training`: Whether in training mode (affects masking)
 
 # Returns
 - Code activations (3D: length, filters, batch)
 """
-function (pwms::LearnedPWMs)(sequences; reverse_comp=false)
+function (pwms::LearnedPWMs)(sequences; reverse_comp=false, training::Bool=true)
     pwm, eta = prepare_pwm_params(pwms; reverse_comp=reverse_comp)
     gradient = conv(sequences, pwm; pad=0, flipped=true)
     code = Flux.NNlib.relu.(eta[1] .* gradient)
+    
+    # Apply channel mask if present
+    if !isnothing(pwms.mask)
+        code = pwms.mask(code; training=training)
+    end
+    
     return code
 end

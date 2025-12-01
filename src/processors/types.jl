@@ -63,3 +63,8 @@ struct CodeProcessor
 end
 
 Flux.@layer CodeProcessor
+Flux.trainable(cp::CodeProcessor) = NamedTuple(
+    k => getfield(cp, k) for k in fieldnames(CodeProcessor)
+    if k ∉ (:mask_temp, :mask_eta, :mask_gamma, :use_hard_mask, :use_residual, :arch_type) 
+    && !isnothing(getfield(cp, k))
+)

@@ -23,25 +23,28 @@ code_l1 = compute_code_at_layer(model, seqs, 1)       # After 1st conv
 code_final = compute_code_at_layer(model, seqs, 3)    # After 3rd conv
 ```
 """
-function compute_code_at_layer(model::SeqCNN, sequences, layer::Int; use_sparsity=false)
+function compute_code_at_layer(model::SeqCNN, sequences, layer::Int; use_sparsity=false, training::Union{Nothing,Bool}=nothing)
     @assert 0 ≤ layer ≤ model.num_conv_layers "Layer must be 0 to $(model.num_conv_layers)"
     
+    # Use model's training flag if not explicitly provided
+    train_mode = isnothing(training) ? model.training[] : training
+    
     # Base layer only
-    layer == 0 && return model.pwms(sequences)
+    layer == 0 && return model.pwms(sequences; training=train_mode)
     
     # Start with base layer + pooling
-    code = model.pwms(sequences)
+    code = model.pwms(sequences; training=train_mode)
     code = pool_code(code, 
                     (model.hp.pool_base, 1), 
                     (model.hp.stride_base, 1); 
                     is_base_layer=true)
     
     # Process conv layers recursively up to target
-    return forward_conv_recursive(model, code, 1, layer; use_sparsity=use_sparsity)
+    return forward_conv_recursive(model, code, 1, layer; use_sparsity=use_sparsity, training=train_mode)
 end
 
 """
-    forward_conv_recursive(model, code, current_layer, target_layer; use_sparsity=false)
+    forward_conv_recursive(model, code, current_layer, target_layer; use_sparsity=false, training=true)
 
 Recursively process convolutional layers.
 
@@ -51,19 +54,20 @@ Recursively process convolutional layers.
 - `current_layer`: Current layer index (1-indexed)
 - `target_layer`: Stop at this layer (nothing = process all)
 - `use_sparsity`: Apply sparsity-inducing normalization
+- `training`: Whether in training mode (affects channel masking)
 
 # Returns
 - Code after processing layers up to target_layer
 """
 function forward_conv_recursive(model::SeqCNN, code, current_layer::Int, 
-                               target_layer=nothing; use_sparsity=false)
+                               target_layer=nothing; use_sparsity=false, training::Bool=true)
     max_layer = isnothing(target_layer) ? model.num_conv_layers : target_layer
     
     # Base case: processed all requested layers
     current_layer > max_layer && return code
     
     # Apply convolution
-    code = model.conv_layers[current_layer](code, model.hp; use_sparsity=use_sparsity)
+    code = model.conv_layers[current_layer](code, model.hp; use_sparsity=use_sparsity, training=training)
     
     # Apply pooling (or skip if beyond pool_lvl_top)
     skip_pool = current_layer > model.hp.pool_lvl_top
@@ -82,7 +86,7 @@ function forward_conv_recursive(model::SeqCNN, code, current_layer::Int,
     
     # Recurse to next layer
     return forward_conv_recursive(model, code, current_layer + 1, target_layer; 
-                                 use_sparsity=use_sparsity)
+                                 use_sparsity=use_sparsity, training=training)
 end
 
 """
@@ -99,9 +103,12 @@ Extract CNN features from sequences (full forward pass through all conv layers).
 # Returns
 - Feature embedding (embed_dim, 1, batch_size)
 """
-function extract_features(model::SeqCNN, sequences; use_sparsity=false)
+function extract_features(model::SeqCNN, sequences; use_sparsity=false, training::Union{Nothing,Bool}=nothing)
+    # Use model's training flag if not explicitly provided
+    train_mode = isnothing(training) ? model.training[] : training
+    
     # Base layer
-    code = model.pwms(sequences)
+    code = model.pwms(sequences; training=train_mode)
     
     # Base pooling
     code = pool_code(code,
@@ -110,7 +117,7 @@ function extract_features(model::SeqCNN, sequences; use_sparsity=false)
                     is_base_layer=true)
     
     # All conv layers
-    code = forward_conv_recursive(model, code, 1; use_sparsity=use_sparsity)
+    code = forward_conv_recursive(model, code, 1; use_sparsity=use_sparsity, training=train_mode)
     
     # Optional MBConv refinement
     for mbconv in model.mbconv_blocks
@@ -189,9 +196,10 @@ Complete forward pass from sequences to predictions.
 function predict_from_sequences(model::SeqCNN, sequences; 
                                use_sparsity=false,
                                predict_position=nothing,
-                               apply_nonlinearity=true)
-    # Extract features
-    features = extract_features(model, sequences; use_sparsity=use_sparsity)
+                               apply_nonlinearity=true,
+                               training::Union{Nothing,Bool}=nothing)
+    # Extract features (will use model.training if training is nothing)
+    features = extract_features(model, sequences; use_sparsity=use_sparsity, training=training)
     
     # Select output weights
     weights = select_output_weights(model; predict_position=predict_position)
@@ -237,8 +245,12 @@ function predict_from_code(model::SeqCNN, code;
                           layer=0,
                           use_sparsity=false,
                           predict_position=nothing,
-                          apply_nonlinearity=true)
+                          apply_nonlinearity=true,
+                          training::Union{Nothing,Bool}=nothing)
     @assert 0 ≤ layer ≤ model.num_conv_layers "Invalid layer"
+    
+    # Use model's training flag if not explicitly provided
+    train_mode = isnothing(training) ? model.training[] : training
     
     # Process remaining layers
     if layer == 0
@@ -247,10 +259,10 @@ function predict_from_code(model::SeqCNN, code;
                         (model.hp.pool_base, 1),
                         (model.hp.stride_base, 1);
                         is_base_layer=true)
-        code = forward_conv_recursive(model, code, 1; use_sparsity=use_sparsity)
+        code = forward_conv_recursive(model, code, 1; use_sparsity=use_sparsity, training=train_mode)
     else
         # From intermediate layer: continue from next layer
-        code = forward_conv_recursive(model, code, layer + 1; use_sparsity=use_sparsity)
+        code = forward_conv_recursive(model, code, layer + 1; use_sparsity=use_sparsity, training=train_mode)
     end
     
     # Apply MBConv blocks
@@ -302,19 +314,22 @@ preds_sparse = model(sequences; use_sparsity=true)
 function (model::SeqCNN)(sequences; 
                         use_sparsity=false,
                         linear_sum=false,
-                        predict_position=nothing)
+                        predict_position=nothing,
+                        training::Union{Nothing,Bool}=nothing)
     if linear_sum
         @assert !isnothing(predict_position) "linear_sum requires predict_position"
         # Return linear sum without nonlinearity
         return sum(predict_from_sequences(model, sequences;
                                          use_sparsity=use_sparsity,
                                          predict_position=predict_position,
-                                         apply_nonlinearity=false))
+                                         apply_nonlinearity=false,
+                                         training=training))
     end
     
     # Standard prediction with nonlinearity
     return predict_from_sequences(model, sequences;
                                  use_sparsity=use_sparsity,
                                  predict_position=predict_position,
-                                 apply_nonlinearity=true)
+                                 apply_nonlinearity=true,
+                                 training=training)
 end
