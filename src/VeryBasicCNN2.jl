@@ -68,4 +68,14 @@ export gumbel_softmax_sample, hard_threshold_mask
 # Code processor
 export create_code_processor, process_code
 
+# wrapper for processor functions
+const proc_wrap = (
+    create_processor = create_code_processor,
+    arch_type = mbconv,
+    predict_from_code = predict_from_code,
+    process_code = process_code
+)
+
+export proc_wrap
+
 end
