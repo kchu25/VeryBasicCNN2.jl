@@ -66,6 +66,6 @@ export final_conv_embedding_length
 export gumbel_softmax_sample, hard_threshold_mask
 
 # Code processor
-export create_code_processor, process_code_with_gradient
+export create_code_processor, process_code
 
 end

@@ -132,13 +132,13 @@ function create_code_processor(hp;
 end
 
 """
-    process_code_with_gradient(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
+    process_code(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
 
 Process code and gradient features through the processor network.
 
 # Arguments
 - `processor`: CodeProcessor instance
-- `code`: Code features at inference layer (l, C, 1, n)
+- `code`: Code features at inference code layer (l, C, 1, n)
 - `gradient`: Gradient features at same layer (l, C, 1, n)
 - `training`: Whether in training mode
 - `step`: Current training step (for temperature annealing)
@@ -150,11 +150,11 @@ Process code and gradient features through the processor network.
 ```julia
 # In training loop
 for (step, batch) in enumerate(dataloader)
-    output = process_code_with_gradient(proc, code, grad; training=true, step=step)
+    output = process_code(proc, code, grad; training=true, step=step)
 end
 ```
 """
-function process_code_with_gradient(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
+function process_code(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
     # Concatenate along channel dimension
     combined = cat(code, gradient; dims=2)
     
