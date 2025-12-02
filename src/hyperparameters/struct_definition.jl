@@ -56,7 +56,7 @@ Base.@kwdef struct HyperParameters
     
     # Normalization
     use_layernorm::Bool = false  # Apply LayerNorm after inference_code_layer
-    use_channel_mask::Bool = false  # Apply channel masking to layers
+    use_channel_mask::Bool = true  # Apply channel masking to layers
     
     # MBConv (optional EfficientNet-style blocks)
     num_mbconv::Int = 0

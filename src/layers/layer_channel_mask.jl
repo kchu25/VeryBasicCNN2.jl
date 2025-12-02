@@ -94,14 +94,15 @@ function (l::layer_channel_mask)(code; training=true)
     p = Flux.sigmoid.(channel_importance)
     
     # Apply Gumbel-Softmax masking
-    mask = if training
-        gumbel_softmax_sample(p, l.temp, l.eta, l.gamma)  # Soft mask
-    else
-        hard_threshold_mask(p, l.temp, l.eta, l.gamma)    # Hard binary mask
-    end
+    # mask = if training
+    #     gumbel_softmax_sample(p, l.temp, l.eta, l.gamma)  # Soft mask
+    # else
+    #     hard_threshold_mask(p, l.temp, l.eta, l.gamma)    # Hard binary mask
+    # end
     
     # Apply mask (broadcasts over spatial dimension)
-    masked_code = code .* mask
+    # masked_code = code .* mask
+    masked_code = code .* p
     
     # Reshape back to original format if needed
     if is_pwm_format
