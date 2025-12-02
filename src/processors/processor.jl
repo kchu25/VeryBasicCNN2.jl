@@ -7,6 +7,7 @@
 
 # Load module components
 include("types.jl")
+include("convert.jl")
 include("masking.jl")
 include("plain.jl")
 include("resnet.jl")
