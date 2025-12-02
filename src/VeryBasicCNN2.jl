@@ -3,7 +3,7 @@ module VeryBasicCNN2
 # Write your package code here.
 
 using Flux
-using CUDA
+using CUDA 
 using Random
 using ChainRulesCore: @ignore_derivatives
 using Statistics: mean, var
