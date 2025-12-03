@@ -82,6 +82,12 @@ struct SeqCNN
                 rng = rng
             ) for i in 1:num_layers(hp)
         ]
+        
+        # Report LayerNorm usage
+        if hp.use_layernorm
+            ln_count = sum(i > hp.inference_code_layer for i in 1:num_layers(hp))
+            @info "Using LayerNorm for $ln_count conv layers (layers > $(hp.inference_code_layer))"
+        end
 
         # Optional MBConv blocks (EfficientNet-style refinement)
         mbconv_blocks = MBConvBlock[]
@@ -245,15 +251,20 @@ function print_model_summary(model::SeqCNN)
     
     # Conv layers
     conv_params = sum(length(layer.filters) for layer in model.conv_layers)
+    ln_count = 0
     for layer in model.conv_layers
         if !isnothing(layer.ln_gamma)
             conv_params += length(layer.ln_gamma) + length(layer.ln_beta)
+            ln_count += 1
         end
         if !isnothing(layer.mask)
             conv_params += length(layer.mask.mixing_filter)
         end
     end
     println("  Conv Layers: $(conv_params)")
+    if ln_count > 0
+        println("    ($(ln_count) layer$(ln_count > 1 ? "s" : "") with LayerNorm)")
+    end
     
     # MBConv
     mbconv_params = 0
@@ -380,8 +391,8 @@ function create_model(input_dims, output_dim, batch_size::Int;
     
     # Enable LayerNorm and MBConv by default 
     # disable these two if needed for specific experiments
-    hp = with_layernorm(hp, true)
-    hp = with_mbconv(hp; num_blocks=2, expansion=4)
+    # hp = with_layernorm(hp, true)
+    hp = with_mbconv(hp; num_blocks=5, expansion=4)
     
     # Validate architecture
     if final_conv_embedding_length(hp, input_dims[2]) < 1
