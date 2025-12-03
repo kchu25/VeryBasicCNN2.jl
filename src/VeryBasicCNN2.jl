@@ -64,6 +64,7 @@ export compute_training_loss, huber_loss, masked_mse
 export model2cpu, model2gpu
 export final_conv_embedding_length
 export gumbel_softmax_sample, hard_threshold_mask
+export verify_device
 
 # Code processor
 export create_code_processor, process_code, processor2cpu, processor2gpu

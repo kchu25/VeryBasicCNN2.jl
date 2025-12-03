@@ -15,3 +15,6 @@ include("mbconv.jl")
 include("deep_plain.jl")
 include("constructor.jl")
 include("forward.jl")
+
+
+# for processor can I also have the flag like training::Ref{Bool}  
