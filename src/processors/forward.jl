@@ -3,6 +3,27 @@
 # ============================================================================
 
 """
+    (cp::CodeProcessor)(code, gradient; step::Union{Nothing, Int}=nothing)
+
+Forward pass with separate code and gradient inputs.
+
+# Arguments
+- `code`: Code features (spatial, channels, 1, batch)
+- `gradient`: Gradient features (spatial, channels, 1, batch)
+- `step`: Training step for temperature annealing
+
+# Returns
+- Processed features
+
+# Note
+Use `train!(processor)` or `eval!(processor)` to set training mode.
+"""
+function (cp::CodeProcessor)(code, gradient; step::Union{Nothing, Int}=nothing)
+    combined = cat(code, gradient; dims=2)
+    return cp(combined; step=step)
+end
+
+"""
     (cp::CodeProcessor)(x; step::Union{Nothing, Int}=nothing)
 
 Forward pass through code processor - dispatches to architecture-specific implementation.
@@ -14,7 +35,7 @@ Forward pass through code processor - dispatches to architecture-specific implem
 4. Apply hard mask (if enabled)
 
 # Arguments
-- `x`: Input tensor (spatial, channels, 1, batch)
+- `x`: Input tensor (spatial, 2×channels, 1, batch) - pre-concatenated code+gradient
 - `step`: Training step for temperature annealing
 
 # Returns
