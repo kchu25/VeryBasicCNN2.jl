@@ -3,7 +3,7 @@
 # ============================================================================
 
 """
-    (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=nothing)
+    (cp::CodeProcessor)(x; step::Union{Nothing, Int}=nothing)
 
 Forward pass through code processor - dispatches to architecture-specific implementation.
 
@@ -15,14 +15,17 @@ Forward pass through code processor - dispatches to architecture-specific implem
 
 # Arguments
 - `x`: Input tensor (spatial, channels, 1, batch)
-- `training`: Whether in training mode (affects Gumbel sampling)
 - `step`: Training step for temperature annealing
 
 # Returns
 - Processed features
+
+# Note
+Use `train!(processor)` or `eval!(processor)` to set training mode.
 """
-function (cp::CodeProcessor)(x; training::Bool=true, step::Union{Nothing, Int}=nothing)
+function (cp::CodeProcessor)(x; step::Union{Nothing, Int}=nothing)
     l, M, _, n = size(x)
+    training = cp.training[]  # Use internal training flag
     
     # For residual, extract gradient portion
     if cp.use_residual
@@ -150,14 +153,14 @@ Process code and gradient features through the processor network.
 ```julia
 # In training loop
 for (step, batch) in enumerate(dataloader)
-    output = process_code(proc, code, grad; training=true, step=step)
+    output = process_code(proc, code, grad; step=step)
 end
 ```
 """
-function process_code(processor::CodeProcessor, code, gradient; training::Bool=true, step::Union{Nothing, Int}=nothing)
+function process_code(processor::CodeProcessor, code, gradient; step::Union{Nothing, Int}=nothing)
     # Concatenate along channel dimension
     combined = cat(code, gradient; dims=2)
     
-    # Process through network
-    return processor(combined; training=training, step=step)
+    # Process through network (uses processor's internal training flag)
+    return processor(combined; step=step)
 end

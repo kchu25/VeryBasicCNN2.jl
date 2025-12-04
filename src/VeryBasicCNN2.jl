@@ -65,6 +65,7 @@ export model2cpu, model2gpu
 export final_conv_embedding_length
 export gumbel_softmax_sample, hard_threshold_mask
 export verify_device
+export eval!, train!
 
 # Code processor
 export create_code_processor, process_code, processor2cpu, processor2gpu

@@ -36,7 +36,8 @@ function processor2cpu(proc::CodeProcessor)
         proc.mask_gamma,
         proc.use_hard_mask,
         proc.use_residual,
-        proc.arch_type
+        proc.arch_type,
+        Ref(proc.training[])  # Create new Ref to avoid sharing
     )
 end
 
@@ -74,6 +75,7 @@ function processor2gpu(proc::CodeProcessor)
         proc.mask_gamma,
         proc.use_hard_mask,
         proc.use_residual,
-        proc.arch_type
+        proc.arch_type,
+        Ref(proc.training[])  # Create new Ref to avoid sharing
     )
 end

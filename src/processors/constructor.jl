@@ -103,7 +103,7 @@ function CodeProcessor(;
     return CodeProcessor(expand_filters, dw_filters, se_w1, se_w2, project_filters,
                         dw_filters_2, project_filters_2, dw_filters_3, project_filters_3,
                         mask_proj, channel_mask_proj, mask_temp, mask_eta, mask_gamma,
-                        use_hard_mask, use_residual, arch_type)
+                        use_hard_mask, use_residual, arch_type, Ref(true))
 end
 
 # Helper functions for architecture-specific initialization
