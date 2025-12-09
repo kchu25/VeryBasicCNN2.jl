@@ -9,17 +9,15 @@ Learnable Position Weight Matrices for the first CNN layer.
 
 # Fields
 - `filters`: 4D array (alphabet_size, motif_len, 1, num_filters)
-- `activation_scaler`: Scalar activation parameter
 - `mask`: Channel masking layer (optional)
 - `dropout_p`: Channel dropout probability (0.0 = no dropout)
 
 # Forward Pass
-Applies PWM convolution followed by ReLU activation scaled by learned parameter,
+Applies PWM convolution followed by ReLU activation,
 optionally with channel masking and dropout.
 """
 struct LearnedPWMs
     filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
-    activation_scaler::AbstractArray{DEFAULT_FLOAT_TYPE, 1}
     mask::Union{Nothing, layer_channel_mask}
     dropout_p::DEFAULT_FLOAT_TYPE
     
@@ -36,7 +34,6 @@ struct LearnedPWMs
         # Initialize with small random values
         filters = init_scale .* randn(rng, DEFAULT_FLOAT_TYPE, 
                                       (filter_height, filter_width, 1, num_filters))
-        scaler = init_scale .* rand(rng, DEFAULT_FLOAT_TYPE, 1)
         
         # Initialize channel mask if requested (uses defaults)
         if use_channel_mask
@@ -52,19 +49,19 @@ struct LearnedPWMs
             end
         end
 
-        return new(filters, scaler, mask, dropout_p)
+        return new(filters, mask, dropout_p)
     end
     
     # Direct constructors for loading models
-    LearnedPWMs(filters, scaler) = new(filters, scaler, nothing, DEFAULT_FLOAT_TYPE(0.0))
-    LearnedPWMs(filters, scaler, mask) = new(filters, scaler, mask, DEFAULT_FLOAT_TYPE(0.0))
-    LearnedPWMs(filters, scaler, mask, dropout_p) = new(filters, scaler, mask, dropout_p)
+    LearnedPWMs(filters) = new(filters, nothing, DEFAULT_FLOAT_TYPE(0.0))
+    LearnedPWMs(filters, mask) = new(filters, mask, DEFAULT_FLOAT_TYPE(0.0))
+    LearnedPWMs(filters, mask, dropout_p) = new(filters, mask, dropout_p)
 end
 
 Flux.@layer LearnedPWMs
 
 Flux.trainable(l::LearnedPWMs) = begin
-    params = (filters = l.filters, activation_scaler = l.activation_scaler)
+    params = (filters = l.filters,)
     if !isnothing(l.mask)
         params = merge(params, (mask = l.mask,))
     end
@@ -78,12 +75,9 @@ Prepare PWM parameters for forward pass.
 
 # Returns
 - `pwm_matrix`: Position weight matrix (log odds ratios)
-- `eta`: Squared and clamped activation scaler
 """
 function prepare_pwm_params(pwms::LearnedPWMs; reverse_comp=false)
-    pwm_matrix = create_pwm(pwms.filters; reverse_comp=reverse_comp)
-    eta = square_clamp(pwms.activation_scaler)
-    return pwm_matrix, eta
+    return create_pwm(pwms.filters; reverse_comp=reverse_comp)
 end
 
 """
@@ -106,9 +100,9 @@ Forward pass through PWM layer.
 - Code activations (3D: length, filters, batch)
 """
 function (pwms::LearnedPWMs)(sequences; reverse_comp=false, training::Bool=true)
-    pwm, eta = prepare_pwm_params(pwms; reverse_comp=reverse_comp)
+    pwm = prepare_pwm_params(pwms; reverse_comp=reverse_comp)
     gradient = conv(sequences, pwm; pad=0, flipped=true)
-    code = Flux.NNlib.relu.(eta[1] .* gradient) # (1, l-pwm_len, num_filters, batch_size)
+    code = Flux.NNlib.relu.(gradient) # (1, l-pwm_len, num_filters, batch_size)
     
     # Apply channelwise dropout during training
     if training && pwms.dropout_p > DEFAULT_FLOAT_TYPE(0.0)
@@ -120,7 +114,7 @@ function (pwms::LearnedPWMs)(sequences; reverse_comp=false, training::Bool=true)
             batch_size = size(code, 4)
             CUDA.rand(DEFAULT_FLOAT_TYPE, 1, 1, num_filters, batch_size) .< keep_prob
         end
-        code = code .* dropout_mask ./ (DEFAULT_FLOAT_TYPE(1.0) - pwms.dropout_p)  # Scale by 1/(1-p) to maintain expected value
+        code = @. code * dropout_mask / (DEFAULT_FLOAT_TYPE(1.0) - pwms.dropout_p)  # Scale by 1/(1-p) to maintain expected value
     end
     
     # Apply channel mask if present

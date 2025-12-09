@@ -53,7 +53,6 @@ function model2cpu(model::SeqCNN)
     )
     pwms_cpu = LearnedPWMs(
         model.pwms.filters |> Array,
-        model.pwms.activation_scaler,
         pwm_mask_cpu
     )
     
@@ -127,7 +126,6 @@ function model2gpu(model::SeqCNN)
     )
     pwms_gpu = LearnedPWMs(
         model.pwms.filters |> cu,
-        model.pwms.activation_scaler,
         pwm_mask_gpu
     )
     

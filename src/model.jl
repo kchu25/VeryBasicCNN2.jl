@@ -52,8 +52,8 @@ struct SeqCNN
         input_dims::Tuple{T, T},
         output_dim::T;
         init_scale = DEFAULT_FLOAT_TYPE(5e-1), 
-        pwm_dropout_p = DEFAULT_FLOAT_TYPE(0.2),
-        conv_dropout_p = DEFAULT_FLOAT_TYPE(0.2),
+        pwm_dropout_p = DEFAULT_FLOAT_TYPE(0.1),
+        conv_dropout_p = DEFAULT_FLOAT_TYPE(0.0),
         use_cuda = true,
         rng = Random.GLOBAL_RNG
     ) where T <: Integer
@@ -191,7 +191,6 @@ function count_parameters(model::SeqCNN)
     
     # PWM parameters
     total += length(model.pwms.filters)
-    total += length(model.pwms.activation_scaler)
     if !isnothing(model.pwms.mask)
         total += length(model.pwms.mask.mixing_filter)
     end
@@ -247,7 +246,7 @@ function print_model_summary(model::SeqCNN)
     println("\n🔢 Parameters:")
     
     # PWM
-    pwm_params = length(model.pwms.filters) + length(model.pwms.activation_scaler)
+    pwm_params = length(model.pwms.filters)
     if !isnothing(model.pwms.mask)
         pwm_params += length(model.pwms.mask.mixing_filter)
     end
@@ -396,7 +395,7 @@ function create_model(input_dims, output_dim, batch_size::Int;
     # Enable LayerNorm and MBConv by default 
     # disable these two if needed for specific experiments
     # hp = with_layernorm(hp, true)
-    hp = with_mbconv(hp; num_blocks=5, expansion=4)
+    hp = with_mbconv(hp; num_blocks=3, expansion=3)
     
     # Validate architecture
     if final_conv_embedding_length(hp, input_dims[2]) < 1
