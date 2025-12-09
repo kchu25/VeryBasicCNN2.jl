@@ -79,17 +79,32 @@ nucleotide_ranges_simple(; kwargs...) = HyperParamRanges(;
 
 # Fixed pooling/stride for controlled experiments
 nucleotide_ranges_fixed_pool_stride(; kwargs...) = HyperParamRanges(;
-    num_img_layers_range = 4:5,
-    pfm_length_range = 3:2:7,
-    num_base_filters_range = 16:8:32,
-    conv_filter_range = 64:2:72,
-    conv_filter_height_range = 4:8,
-    pool_size_range = 2:3, # overrides by num_no_pool_layers in generation
-    stride_range = 2:3, # overrides by num_no_pool_layers in generation
-    num_no_pool_layers = 2,
+    num_img_layers_range = 3:4,
+    pfm_length_range = 6:2:10,
+    num_base_filters_range = 32:16:64,
+    conv_filter_range = 64:16:128,
+    conv_filter_height_range = 2:4,
+    pool_size_range = 2:2, # overrides by num_no_pool_layers in generation
+    stride_range = 2:2, # overrides by num_no_pool_layers in generation
+    num_no_pool_layers = 1,
     infer_base_layer_code = false,
     kwargs...
 )
+
+nucleotide_ranges_fixed_pool_stride_multioutputs(; kwargs...) = HyperParamRanges(;
+    num_img_layers_range = 4:5,
+    pfm_length_range = 6:2:10,
+    num_base_filters_range = 128:8:312,
+    conv_filter_range = 128:8:256,
+    conv_filter_height_range = 2:4,
+    pool_size_range = 2:2, # overrides by num_no_pool_layers in generation
+    stride_range = 2:2, # overrides by num_no_pool_layers in generation
+    num_no_pool_layers = 1,
+    infer_base_layer_code = false,
+    kwargs...
+)
+
+
 
 amino_acid_ranges_fixed_pool_stride(; kwargs...) = HyperParamRanges(;
     num_img_layers_range = 4:5,
@@ -97,10 +112,10 @@ amino_acid_ranges_fixed_pool_stride(; kwargs...) = HyperParamRanges(;
     num_base_filters_range = 16:8:48,
     conv_filter_range = 16:8:96,
     conv_filter_height_range = 3:7,
-    pool_size_range = 2:3, # overrides by num_no_pool_layers in generation
-    stride_range = 2:3, # overrides by num_no_pool_layers in generation
+    pool_size_range = 2:2, # overrides by num_no_pool_layers in generation
+    stride_range = 2:2, # overrides by num_no_pool_layers in generation
     batch_size_options = [32, 64, 128],
-    num_no_pool_layers = 2,
+    num_no_pool_layers = 1,
     infer_base_layer_code = false,
     kwargs...
 )
