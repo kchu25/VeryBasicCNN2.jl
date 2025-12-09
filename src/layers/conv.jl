@@ -39,15 +39,17 @@ Learnable convolutional filters for intermediate CNN layers.
 - `ln_gamma`: LayerNorm scale parameter (optional, per channel)
 - `ln_beta`: LayerNorm shift parameter (optional, per channel)
 - `mask`: Channel masking layer (optional)
+- `dropout_p`: Channel dropout probability (0.0 = no dropout)
 
 # Forward Pass
-Applies normalized convolution followed by ReLU activation, optionally with LayerNorm and channel masking.
+Applies normalized convolution followed by ReLU activation, optionally with LayerNorm, channel masking, and dropout.
 """
 struct LearnedCodeImgFilters
     filters::AbstractArray{DEFAULT_FLOAT_TYPE, 4}
     ln_gamma::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 1}}
     ln_beta::Union{Nothing, AbstractArray{DEFAULT_FLOAT_TYPE, 1}}
     mask::Union{Nothing, layer_channel_mask}
+    dropout_p::DEFAULT_FLOAT_TYPE
     
     function LearnedCodeImgFilters(;
         input_channels::Int,
@@ -56,6 +58,7 @@ struct LearnedCodeImgFilters
         init_scale::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.01),
         use_layernorm::Bool = false,
         use_channel_mask::Bool = false,
+        dropout_p::DEFAULT_FLOAT_TYPE = DEFAULT_FLOAT_TYPE(0.0),
         use_cuda::Bool = false,
         rng = Random.GLOBAL_RNG
     )
@@ -90,13 +93,14 @@ struct LearnedCodeImgFilters
             end
         end
         
-        return new(filters, ln_gamma, ln_beta, mask)
+        return new(filters, ln_gamma, ln_beta, mask, dropout_p)
     end
     
     # Direct constructors for loading models (backward compatibility)
-    LearnedCodeImgFilters(filters) = new(filters, nothing, nothing, nothing)
-    LearnedCodeImgFilters(filters, ln_gamma, ln_beta) = new(filters, ln_gamma, ln_beta, nothing)
-    LearnedCodeImgFilters(filters, ln_gamma, ln_beta, mask) = new(filters, ln_gamma, ln_beta, mask)
+    LearnedCodeImgFilters(filters) = new(filters, nothing, nothing, nothing, DEFAULT_FLOAT_TYPE(0.0))
+    LearnedCodeImgFilters(filters, ln_gamma, ln_beta) = new(filters, ln_gamma, ln_beta, nothing, DEFAULT_FLOAT_TYPE(0.0))
+    LearnedCodeImgFilters(filters, ln_gamma, ln_beta, mask) = new(filters, ln_gamma, ln_beta, mask, DEFAULT_FLOAT_TYPE(0.0))
+    LearnedCodeImgFilters(filters, ln_gamma, ln_beta, mask, dropout_p) = new(filters, ln_gamma, ln_beta, mask, dropout_p)
 end
 
 Flux.@layer LearnedCodeImgFilters
@@ -151,7 +155,20 @@ function (conv_filters::LearnedCodeImgFilters)(code_input, hp::HyperParameters;
                                                 training::Bool=true)
     normalized_filters = prepare_conv_params(conv_filters, hp; use_sparsity=use_sparsity)
     gradient = conv(code_input, normalized_filters; pad=0, flipped=true)
-    code = Flux.NNlib.relu(gradient)
+    code = Flux.NNlib.relu(gradient) # (l-filter_height, 1, num_filters, batch_size)
+    
+    # Apply channelwise dropout during training
+    if training && conv_filters.dropout_p > DEFAULT_FLOAT_TYPE(0.0)
+        # Create channel-wise dropout mask: (1, 1, num_filters, batch_size)
+        # Each filter is either kept (scaled by 1/(1-p)) or dropped (0) across all positions
+        dropout_mask = @ignore_derivatives begin
+            keep_prob = DEFAULT_FLOAT_TYPE(1.0) - conv_filters.dropout_p
+            num_filters = size(code, 3)
+            batch_size = size(code, 4)
+            CUDA.rand(DEFAULT_FLOAT_TYPE, 1, 1, num_filters, batch_size) .< keep_prob
+        end
+        code = code .* dropout_mask ./ (DEFAULT_FLOAT_TYPE(1.0) - conv_filters.dropout_p)
+    end
     
     # Apply channel mask if present
     if !isnothing(conv_filters.mask)

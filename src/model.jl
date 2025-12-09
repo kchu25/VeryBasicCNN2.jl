@@ -52,6 +52,8 @@ struct SeqCNN
         input_dims::Tuple{T, T},
         output_dim::T;
         init_scale = DEFAULT_FLOAT_TYPE(5e-1), 
+        pwm_dropout_p = DEFAULT_FLOAT_TYPE(0.2),
+        conv_dropout_p = DEFAULT_FLOAT_TYPE(0.2),
         use_cuda = true,
         rng = Random.GLOBAL_RNG
     ) where T <: Integer
@@ -65,6 +67,7 @@ struct SeqCNN
             num_filters = hp.num_pfms,
             init_scale = init_scale,
             use_channel_mask = hp.use_channel_mask,
+            dropout_p = pwm_dropout_p,
             use_cuda = use_cuda,
             rng = rng
         )
@@ -78,6 +81,7 @@ struct SeqCNN
                 # init_scale = init_scale,
                 use_layernorm = (hp.use_layernorm && i > hp.inference_code_layer),
                 use_channel_mask = hp.use_channel_mask,
+                dropout_p = conv_dropout_p,
                 use_cuda = use_cuda,
                 rng = rng
             ) for i in 1:num_layers(hp)
