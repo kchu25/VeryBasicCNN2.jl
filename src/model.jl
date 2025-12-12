@@ -427,3 +427,21 @@ create_model_aminoacids(input_dims, output_dim, batch_size; kwargs...) =
 create_model_aminoacids_fixed_pool_stride(input_dims, output_dim, batch_size; kwargs...) = 
     create_model(input_dims, output_dim, batch_size; 
                 ranges=amino_acid_ranges_fixed_pool_stride(), kwargs...)
+
+# Tanh variants
+create_model_nucleotides_tanh(input_dims, output_dim, batch_size; kwargs...) = 
+    create_model(input_dims, output_dim, batch_size; ranges=nucleotide_ranges_tanh(), kwargs...)
+
+create_model_nucleotides_simple_tanh(input_dims, output_dim, batch_size; kwargs...) = 
+    create_model(input_dims, output_dim, batch_size; ranges=nucleotide_ranges_simple_tanh(), kwargs...)
+
+create_model_nucleotides_fixed_pool_stride_tanh(input_dims, output_dim, batch_size; kwargs...) = 
+    create_model(input_dims, output_dim, batch_size; 
+                ranges=nucleotide_ranges_fixed_pool_stride_tanh(), kwargs...)
+
+create_model_aminoacids_tanh(input_dims, output_dim, batch_size; kwargs...) = 
+    create_model(input_dims, output_dim, batch_size; ranges=amino_acid_ranges_tanh(), kwargs...)
+
+create_model_aminoacids_fixed_pool_stride_tanh(input_dims, output_dim, batch_size; kwargs...) = 
+    create_model(input_dims, output_dim, batch_size; 
+                ranges=amino_acid_ranges_fixed_pool_stride_tanh(), kwargs...)
