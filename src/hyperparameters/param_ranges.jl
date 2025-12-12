@@ -26,6 +26,9 @@ Base.@kwdef struct HyperParamRanges
     # MBConv options (default: disabled, use with_mbconv to enable)
     num_mbconv_range = 0:0
     mbconv_expansion_options = [4]
+    
+    # Final nonlinearity (default: identity)
+    final_nonlinearity::Function = identity
 end
 
 const DEFAULT_RANGES = HyperParamRanges()
@@ -119,3 +122,14 @@ amino_acid_ranges_fixed_pool_stride(; kwargs...) = HyperParamRanges(;
     infer_base_layer_code = false,
     kwargs...
 )
+
+# ============================================================================
+# Tanh variants (for models with tanh final nonlinearity)
+# ============================================================================
+
+nucleotide_ranges_tanh(; kwargs...) = nucleotide_ranges(; final_nonlinearity=tanh, kwargs...)
+amino_acid_ranges_tanh(; kwargs...) = amino_acid_ranges(; final_nonlinearity=tanh, kwargs...)
+nucleotide_ranges_simple_tanh(; kwargs...) = nucleotide_ranges_simple(; final_nonlinearity=tanh, kwargs...)
+nucleotide_ranges_fixed_pool_stride_tanh(; kwargs...) = nucleotide_ranges_fixed_pool_stride(; final_nonlinearity=tanh, kwargs...)
+nucleotide_ranges_fixed_pool_stride_multioutputs_tanh(; kwargs...) = nucleotide_ranges_fixed_pool_stride_multioutputs(; final_nonlinearity=tanh, kwargs...)
+amino_acid_ranges_fixed_pool_stride_tanh(; kwargs...) = amino_acid_ranges_fixed_pool_stride(; final_nonlinearity=tanh, kwargs...)

@@ -1162,7 +1162,7 @@ weakdeps = ["LLVM"]
     UnsafeAtomicsLLVM = ["LLVM"]
 
 [[deps.VeryBasicCNN2]]
-deps = ["CUDA", "ChainRulesCore", "Flux", "Random", "Statistics", "Zygote"]
+deps = ["CUDA", "ChainRulesCore", "Flux", "Random", "Statistics", "Zygote", "cuDNN"]
 path = "."
 uuid = "8e478641-e00c-4eaa-aa51-0267c65310b9"
 version = "1.0.0-DEV"

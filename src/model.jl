@@ -54,6 +54,7 @@ struct SeqCNN
         init_scale = DEFAULT_FLOAT_TYPE(5e-1), 
         pwm_dropout_p = DEFAULT_FLOAT_TYPE(0.1),
         conv_dropout_p = DEFAULT_FLOAT_TYPE(0.0),
+        final_nonlinearity = identity,
         use_cuda = true,
         rng = Random.GLOBAL_RNG
     ) where T <: Integer
@@ -119,11 +120,11 @@ struct SeqCNN
         if use_cuda && (output_dim * embed_dim > 1)
             output_weights = cu(output_weights)
         end
-
         # Create model and report parameter count
-        model = new(hp, pwms, conv_layers, mbconv_blocks, output_weights, identity, Ref(true))
+        model = new(hp, pwms, conv_layers, mbconv_blocks, output_weights, final_nonlinearity, Ref(true))
         @info "Model created with $(count_parameters(model)) trainable parameters"
         
+        return model
         return model
     end
     
@@ -403,7 +404,10 @@ function create_model(input_dims, output_dim, batch_size::Int;
         return nothing
     end
     
-    return SeqCNN(hp, input_dims, output_dim; use_cuda=use_cuda, rng=rng)
+    return SeqCNN(hp, input_dims, output_dim; 
+                  final_nonlinearity=ranges.final_nonlinearity,
+                  use_cuda=use_cuda, 
+                  rng=rng)
 end
 
 # Convenience constructors for specific domains
