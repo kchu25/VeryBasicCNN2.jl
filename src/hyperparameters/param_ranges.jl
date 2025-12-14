@@ -89,7 +89,7 @@ nucleotide_ranges_fixed_pool_stride(; kwargs...) = HyperParamRanges(;
     conv_filter_height_range = 2:4,
     pool_size_range = 2:2, # overrides by num_no_pool_layers in generation
     stride_range = 2:2, # overrides by num_no_pool_layers in generation
-    num_no_pool_layers = 1,
+    num_no_pool_layers = 0,
     infer_base_layer_code = false,
     kwargs...
 )
