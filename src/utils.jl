@@ -141,30 +141,46 @@ function maxpool(x; pool_size=(2,1), stride=(1,1))
 end
 
 """
-    pool_code(code, pool_size, stride; is_base_layer=false, skip_pooling=false)
+    reshape_to_4d(code; is_base_layer=false)
 
-Apply pooling to CNN code tensor with proper dimension handling.
+Reshape code tensor to 4D format (spatial, channels, 1, batch).
 
 # Arguments
 - `code`: Input tensor (3D or 4D)
-- `pool_size`: Size as (height, width) tuple
-- `stride`: Stride as (height, width) tuple  
 - `is_base_layer`: Whether this is the base PWM layer (different indexing)
-- `skip_pooling`: If true, only reshape without pooling (identity operation)
 
 # Returns
-- Pooled 4D tensor (height, width, channels, batch)
+- 4D tensor (spatial, channels, 1, batch)
 """
-function pool_code(code, pool_size, stride; is_base_layer=false, skip_pooling=false)
-    # Extract dimensions based on layer type
+function reshape_to_4d(code; is_base_layer=false)
     if is_base_layer
         len, channels, batch = size(code, 2), size(code, 3), size(code, 4)
     else
         len, channels, batch = size(code, 1), size(code, 3), size(code, 4)
     end
-    
-    # Reshape to 4D if needed
-    code_4d = reshape(code, len, channels, 1, batch)
+    return reshape(code, len, channels, 1, batch)
+end
+
+"""
+    pool_code(code_4d, pool_size, stride; skip_pooling=false)
+
+Apply pooling to 4D CNN code tensor.
+
+# Arguments
+- `code_4d`: Input 4D tensor (spatial, channels, 1, batch)
+- `pool_size`: Size as (height, width) tuple
+- `stride`: Stride as (height, width) tuple  
+- `skip_pooling`: If true, return input without pooling (identity operation)
+
+# Returns
+- Pooled 4D tensor (spatial, channels, 1, batch)
+
+# Note
+Input must already be in 4D format. Use `reshape_to_4d` if needed.
+"""
+function pool_code(code_4d, pool_size, stride; skip_pooling=false)
+    @assert ndims(code_4d) == 4 "Input must be 4D (spatial, channels, 1, batch), got $(size(code_4d))"
+    @assert size(code_4d, 3) == 1 "Third dimension must be 1, got $(size(code_4d, 3))"
     
     # Skip pooling for identity layers
     skip_pooling && return code_4d
@@ -173,7 +189,10 @@ function pool_code(code, pool_size, stride; is_base_layer=false, skip_pooling=fa
     pooled = maxpool(code_4d; pool_size=pool_size, stride=stride)
     
     # Calculate output dimensions
+    len = size(code_4d, 1)
     new_len = @ignore_derivatives pool_output_length(len, pool_size[1], stride[1])
+    channels = size(code_4d, 2)
+    batch = size(code_4d, 4)
     
     return reshape(pooled, new_len, channels, 1, batch)
 end
